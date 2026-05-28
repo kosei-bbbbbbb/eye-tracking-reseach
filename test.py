@@ -10,7 +10,7 @@ client = genai.Client(
 
 response = client.models.generate_content(
     model="gemini-2.5-flash",
-    contents="大学生向けの読みやすい文章を200文字で作成してください。"
+    contents="大学生向けの読みやすい文章を200文字で作成してくださーい。"
 )
 
 print(response.text)
