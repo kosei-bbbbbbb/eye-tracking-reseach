@@ -63,14 +63,14 @@ with open(INPUT_CSV, "r", encoding="utf-8-sig") as f:
 ・1つは正答
 ・1つは誤解しやすい誤答
 ・1つは文章中の単語を含む表表面的誤答
-・1つは明らかな誤答
+・1つは誤解しやすい誤答
 
 各選択肢に以下のtypeを付与すること
 
 correct
-misunderstanding
+misunderstanding_1
 surface_match
-obvious_wrong
+misunderstanding_2
 
 出力形式:
 
