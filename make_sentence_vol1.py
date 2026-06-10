@@ -23,15 +23,15 @@ CSV_FILE = "texts.csv"
 
 CONDITIONS = [
     {
-        "name": "easy",
-        "min_score": 4.5,
-        "max_score": 6.5,
+        "name": "medium",
+        "min_score": 2.5,
+        "max_score": 3.5,
         "target_count": 1,
         "prompt": """
-        高校生でも理解できる平易な語彙を使う
-        短い文を中心にする
+        大学生向け
+        やや抽象的な内容を含む
         """
-    },
+    }
     
 ]
 

@@ -33,7 +33,7 @@ class Experiment:
     def load_stimuli(self):
 
         with open(
-            "stimuli.csv",
+            "stimuli_with_quiz.csv",
             "r",
             encoding="utf-8-sig"
         ) as f:
@@ -96,7 +96,7 @@ class Experiment:
             self.frame,
             wrap="word",
             font=("Meiryo", 14),
-            width=80,
+            width=55,
             height=25
         )
 
