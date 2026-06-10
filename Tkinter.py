@@ -16,6 +16,11 @@ class Experiment:
         self.current_trial = 0
         self.stimuli = []
 
+        self.participant_id = "P001"
+
+        self.text_start_time = None
+        self.text_end_time = None
+
         self.selected_answer = tk.StringVar()
         self.understanding = tk.IntVar()
         self.confidence = tk.IntVar()
@@ -55,16 +60,22 @@ class Experiment:
                 writer = csv.writer(f)
 
                 writer.writerow([
+                    "participant_id",
                     "trial_id",
                     "condition",
                     "score",
                     "length",
+                    "text_start_time",
+                    "text_end_time",
+                    "question_start_time",
+                    "question_end_time",
                     "correct_answer",
                     "participant_answer",
                     "correct",
                     "response_time_sec",
                     "understanding",
                     "confidence"
+                    
                 ])
 
     def clear_frame(self):
@@ -86,11 +97,19 @@ class Experiment:
 
         trial = self.stimuli[self.current_trial]
 
+        self.text_start_time = time.time()
+
+        tk.Label(
+            self.frame,
+            text=f"TRIAL {self.current_trial + 1}",
+            font=("Meiryo", 14, "bold")
+        ).pack(pady=5)
+
         tk.Label(
             self.frame,
             text=f"文章 {self.current_trial + 1}/{len(self.stimuli)}",
             font=("Meiryo", 12)
-        ).pack(pady=10)
+        ).pack(pady=5)
 
         text_widget = tk.Text(
             self.frame,
@@ -113,6 +132,8 @@ class Experiment:
         ).pack(pady=20)
 
     def show_question(self):
+
+        self.text_end_time = time.time()
 
         self.clear_frame()
 
@@ -169,7 +190,7 @@ class Experiment:
             time.time() - self.question_start_time,
             3
         )
-
+        self.question_end_time = time.time()
         self.clear_frame()
 
         self.understanding.set(3)
@@ -234,10 +255,15 @@ class Experiment:
             writer = csv.writer(f)
 
             writer.writerow([
+                self.participant_id,
                 trial["id"],
                 trial["condition"],
                 trial["score"],
                 trial["length"],
+                self.text_start_time,
+                self.text_end_time,
+                self.question_start_time,
+                self.question_end_time,
                 trial["correct_answer"],
                 answer,
                 correct,
