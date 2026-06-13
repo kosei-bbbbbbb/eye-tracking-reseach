@@ -35,6 +35,9 @@ class Experiment:
 
         self.show_text()
 
+    # -----------------------------
+    # stimuli読み込み
+    # -----------------------------
     def load_stimuli(self):
 
         with open(
@@ -46,12 +49,19 @@ class Experiment:
             reader = csv.DictReader(f)
             self.stimuli = list(reader)
 
+    # -----------------------------
+    # resultsファイル作成（改良版）
+    # -----------------------------
     def create_result_file(self):
 
-        if not os.path.exists("results.csv"):
+        os.makedirs("results", exist_ok=True)
+
+        self.result_path = f"results/{self.participant_id}.csv"
+
+        if not os.path.exists(self.result_path):
 
             with open(
-                "results.csv",
+                self.result_path,
                 "w",
                 newline="",
                 encoding="utf-8-sig"
@@ -75,9 +85,11 @@ class Experiment:
                     "response_time_sec",
                     "understanding",
                     "confidence"
-                    
                 ])
 
+    # -----------------------------
+    # UIクリア
+    # -----------------------------
     def clear_frame(self):
 
         if self.frame:
@@ -91,6 +103,9 @@ class Experiment:
             pady=20
         )
 
+    # -----------------------------
+    # 本文表示
+    # -----------------------------
     def show_text(self):
 
         self.clear_frame()
@@ -131,6 +146,9 @@ class Experiment:
             command=self.show_question
         ).pack(pady=20)
 
+    # -----------------------------
+    # 問題表示
+    # -----------------------------
     def show_question(self):
 
         self.text_end_time = time.time()
@@ -177,20 +195,22 @@ class Experiment:
             command=self.show_questionnaire
         ).pack(pady=20)
 
+    # -----------------------------
+    # 質問＋メタ認知
+    # -----------------------------
     def show_questionnaire(self):
 
         if self.selected_answer.get() == "":
-            messagebox.showwarning(
-                "警告",
-                "選択肢を選んでください"
-            )
+            messagebox.showwarning("警告", "選択肢を選んでください")
             return
 
         self.response_time = round(
             time.time() - self.question_start_time,
             3
         )
+
         self.question_end_time = time.time()
+
         self.clear_frame()
 
         self.understanding.set(3)
@@ -233,20 +253,18 @@ class Experiment:
             command=self.save_and_next
         ).pack(pady=30)
 
+    # -----------------------------
+    # 保存
+    # -----------------------------
     def save_and_next(self):
 
         trial = self.stimuli[self.current_trial]
-
         answer = self.selected_answer.get()
 
-        correct = (
-            1
-            if answer == trial["correct_answer"]
-            else 0
-        )
+        correct = 1 if answer == trial["correct_answer"] else 0
 
         with open(
-            "results.csv",
+            self.result_path,
             "a",
             newline="",
             encoding="utf-8-sig"
@@ -292,7 +310,5 @@ class Experiment:
 if __name__ == "__main__":
 
     root = tk.Tk()
-
     app = Experiment(root)
-
     root.mainloop()
