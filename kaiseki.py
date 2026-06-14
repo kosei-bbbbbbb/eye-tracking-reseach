@@ -1,33 +1,85 @@
 import pandas as pd
+from datetime import datetime
+import os
 
-# 1. データの読み込み
-# エクセル側（タスクデータ）
-df_task = pd.read_csv("P001.csv") 
-# Python側（視線データ：仮に gaze_P001.csv とします。タイムスタンプ列を 'timestamp' と想定）
-df_gaze = pd.read_csv("gaze_P001.csv") 
+# =========================
+# ファイル読み込み
+# =========================
 
-# 同期したデータを格納するリスト
-synced_gaze_data = []
+behavior = pd.read_csv("P001.csv")
 
-# 2. 試行（trial）ごとにループを回して視線データを切り出す
-for index, row in df_task.iterrows():
-    trial_id = row['trial_id']
-    condition = row['condition']
-    start = row['text_start_time']
-    end = row['text_end_time']
-    
-    # 視線データから、今回の試行の時間内のデータだけを抽出
-    trial_gaze = df_gaze[(df_gaze['timestamp'] >= start) & (df_gaze['timestamp'] <= end)].copy()
-    
-    # 抽出した視線データに、タスクの情報（試行IDや難易度）を紐付ける
-    trial_gaze['trial_id'] = trial_id
-    trial_gaze['condition'] = condition
-    
-    synced_gaze_data.append(trial_gaze)
+gaze = pd.read_excel("shitagaki Data export.xlsx")
 
-# 3. すべての試行の視線データを一つのデータフレームに結合
-df_all_synced_gaze = pd.concat(synced_gaze_data, ignore_index=True)
+# =========================
+# Tobii時刻 → Unix時刻
+# =========================
 
-# 同期済みデータを保存
-df_all_synced_gaze.to_csv("P001_synced_gaze.csv", index=False)
-print("同期が完了しました！")
+recording_date = str(gaze["Recording date"].iloc[0])
+recording_start_time = str(gaze["Recording start time"].iloc[0])
+
+recording_start = datetime.strptime(
+    f"{recording_date} {recording_start_time}",
+    "%Y/%m/%d %H:%M:%S.%f"
+)
+
+recording_start_unix = recording_start.timestamp()
+
+gaze["unix_time"] = (
+    recording_start_unix
+    + gaze["Recording timestamp"] / 1000.0
+)
+
+# =========================
+# 出力フォルダ
+# =========================
+
+output_dir = "trial_data"
+os.makedirs(output_dir, exist_ok=True)
+
+# =========================
+# trialごとに切り出し
+# =========================
+
+summary = []
+
+for _, trial in behavior.iterrows():
+
+    trial_id = trial["trial_id"]
+
+    start_time = trial["text_start_time"]
+    end_time = trial["text_end_time"]
+
+    trial_gaze = gaze[
+        (gaze["unix_time"] >= start_time)
+        & (gaze["unix_time"] <= end_time)
+    ].copy()
+
+    save_path = os.path.join(
+        output_dir,
+        f"trial_{trial_id}.csv"
+    )
+
+    trial_gaze.to_csv(save_path, index=False)
+
+    summary.append({
+        "trial_id": trial_id,
+        "condition": trial["condition"],
+        "correct": trial["correct"],
+        "confidence": trial["confidence"],
+        "reading_time_sec": end_time - start_time,
+        "gaze_samples": len(trial_gaze)
+    })
+
+# =========================
+# 確認用
+# =========================
+
+summary_df = pd.DataFrame(summary)
+
+summary_df.to_csv(
+    "trial_summary.csv",
+    index=False
+)
+
+print(summary_df.head())
+print("\n完了")

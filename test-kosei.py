@@ -1,7 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_excel("Project15 Data export.xlsx")
+df = pd.read_excel("shitagaki Data export.xlsx")
 
 fixations = df[df["Eye movement type"] == "Fixation"]
 
