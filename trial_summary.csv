@@ -1,0 +1,7 @@
+trial_id,condition,correct,confidence,reading_time_sec,gaze_samples
+1,easy,1,5,37.88482904434204,0
+2,medium,1,5,45.361698389053345,0
+3,hard,1,5,55.13870859146118,0
+4,hard,1,5,46.46635913848877,0
+5,medium,1,5,42.24953556060791,0
+6,easy,1,5,35.64339852333069,0

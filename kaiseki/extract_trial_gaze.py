@@ -1,14 +1,16 @@
 import pandas as pd
 from datetime import datetime
 import os
+from pathlib import Path
 
 # =========================
 # ファイル読み込み
 # =========================
 
-behavior = pd.read_csv("P001.csv")
+BASE_DIR = Path(__file__).parent
 
-gaze = pd.read_excel("shitagaki Data export.xlsx")
+behavior = pd.read_csv(BASE_DIR / "P001.csv")
+gaze = pd.read_excel(BASE_DIR / "shitagaki Data export.xlsx")
 
 # =========================
 # Tobii時刻 → Unix時刻
@@ -26,7 +28,7 @@ recording_start_unix = recording_start.timestamp()
 
 gaze["unix_time"] = (
     recording_start_unix
-    + gaze["Recording timestamp"] / 1000.0
+    + gaze["Recording timestamp"] / 1000000.0
 )
 
 # =========================
@@ -69,6 +71,28 @@ for _, trial in behavior.iterrows():
         "reading_time_sec": end_time - start_time,
         "gaze_samples": len(trial_gaze)
     })
+print(gaze["unix_time"].min())
+print(gaze["unix_time"].max())
+
+print(behavior["text_start_time"].min())
+print(behavior["text_end_time"].max())
+
+print(gaze["Recording timestamp"].head())
+
+print(gaze["Recording timestamp"].tail())
+print(len(gaze))
+
+duration = (
+    gaze["Recording timestamp"].max()
+    - gaze["Recording timestamp"].min()
+)
+
+print("duration raw =", duration)
+print(gaze["Sensor"].value_counts())
+print("difference =", behavior["text_start_time"].iloc[0] - recording_start_unix)
+print(gaze["Event"].dropna().unique())
+events = gaze[gaze["Event"].notna()]
+print(events[["Recording timestamp","Computer timestamp","Event"]])
 
 # =========================
 # 確認用
