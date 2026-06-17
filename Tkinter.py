@@ -13,26 +13,39 @@ class Experiment:
         self.root.title("Reading Experiment")
         self.root.geometry("1000x700")
 
+        # Escキーで強制終了確認
         self.root.bind("<Escape>", self.force_exit)
 
         self.current_trial = 0
         self.stimuli = []
 
+        # 被験者ID。P002などに変える場合はここを変更する。
         self.participant_id = "P001"
 
+        # 実験全体の開始時刻
+        self.experiment_start_time = None
+
+        # 文章画面の時刻
         self.text_start_time = None
         self.text_end_time = None
+        self.reading_time_sec = None
 
+        # 問題画面の時刻
         self.question_start_time = None
         self.question_end_time = None
-
-        self.reading_time_sec = None
         self.answer_time_sec = None
 
+        # アンケート画面の時刻
+        self.questionnaire_start_time = None
+        self.questionnaire_end_time = None
+        self.questionnaire_time_sec = None
+
+        # 回答用変数
         self.selected_answer = tk.StringVar()
         self.understanding = tk.IntVar()
         self.confidence = tk.IntVar()
 
+        # 画面サイズも保存しておく
         self.screen_width = root.winfo_screenwidth()
         self.screen_height = root.winfo_screenheight()
 
@@ -58,9 +71,15 @@ class Experiment:
 
     def create_result_file(self):
 
-        os.makedirs("results", exist_ok=True)
+        # 被験者IDごとに保存先フォルダを分ける
+        # 例: results/P001/P001.csv
+        self.participant_dir = os.path.join("results", self.participant_id)
+        os.makedirs(self.participant_dir, exist_ok=True)
 
-        self.result_path = f"results/{self.participant_id}.csv"
+        self.result_path = os.path.join(
+            self.participant_dir,
+            f"{self.participant_id}.csv"
+        )
 
         if not os.path.exists(self.result_path):
 
@@ -76,19 +95,28 @@ class Experiment:
 
                     "experiment_start_time",
 
+                    # absolute unix time
                     "text_start_time",
                     "text_end_time",
                     "question_start_time",
                     "question_end_time",
+                    "questionnaire_start_time",
+                    "questionnaire_end_time",
 
+                    # offset from experiment_start_time
                     "text_start_offset",
                     "text_end_offset",
                     "question_start_offset",
                     "question_end_offset",
+                    "questionnaire_start_offset",
+                    "questionnaire_end_offset",
 
+                    # duration
                     "reading_time_sec",
                     "answer_time_sec",
+                    "questionnaire_time_sec",
 
+                    # task result
                     "correct_answer",
                     "participant_answer",
                     "correct",
@@ -102,7 +130,12 @@ class Experiment:
 
     def create_event_log(self):
 
-        self.event_log_path = f"results/{self.participant_id}_events.csv"
+        # 被験者IDごとにイベントログも同じフォルダへ保存する
+        # 例: results/P001/P001_events.csv
+        self.event_log_path = os.path.join(
+            self.participant_dir,
+            f"{self.participant_id}_events.csv"
+        )
 
         if not os.path.exists(self.event_log_path):
 
@@ -112,13 +145,20 @@ class Experiment:
                 writer.writerow([
                     "timestamp",
                     "offset_sec",
-                    "event"
+                    "event",
+                    "trial_id",
+                    "phase",
+                    "event_type"
                 ])
 
-    def log_event(self, event_name):
+    def log_event(self, event_name, trial_id=None, phase=None, event_type=None):
 
-        now = time.time()
-        offset = now - self.experiment_start_time
+        if self.experiment_start_time is None:
+            now = time.time()
+            offset = 0.0
+        else:
+            now = time.time()
+            offset = now - self.experiment_start_time
 
         with open(self.event_log_path, "a", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
@@ -126,7 +166,10 @@ class Experiment:
             writer.writerow([
                 now,
                 round(offset, 3),
-                event_name
+                event_name,
+                trial_id,
+                phase,
+                event_type
             ])
 
     def clear_frame(self):
@@ -163,7 +206,12 @@ SYNCボタンを押してください
 
         self.experiment_start_time = time.time()
 
-        self.log_event("SYNC")
+        self.log_event(
+            "SYNC",
+            trial_id="",
+            phase="sync",
+            event_type="sync"
+        )
 
         self.show_text()
 
@@ -172,20 +220,26 @@ SYNCボタンを押してください
         self.clear_frame()
 
         trial = self.stimuli[self.current_trial]
+        trial_no = self.current_trial + 1
 
         self.text_start_time = time.time()
 
-        self.log_event(f"TEXT_{self.current_trial + 1}_START")
+        self.log_event(
+            f"TEXT_{trial_no}_START",
+            trial_id=trial["id"],
+            phase="text",
+            event_type="start"
+        )
 
         tk.Label(
             self.frame,
-            text=f"TRIAL {self.current_trial + 1}",
+            text=f"TRIAL {trial_no}",
             font=("Meiryo", 14, "bold")
         ).pack(pady=5)
 
         tk.Label(
             self.frame,
-            text=f"文章 {self.current_trial + 1}/{len(self.stimuli)}",
+            text=f"文章 {trial_no}/{len(self.stimuli)}",
             font=("Meiryo", 12)
         ).pack(pady=5)
 
@@ -211,6 +265,9 @@ SYNCボタンを押してください
 
     def show_question(self):
 
+        trial = self.stimuli[self.current_trial]
+        trial_no = self.current_trial + 1
+
         self.text_end_time = time.time()
 
         self.reading_time_sec = round(
@@ -218,17 +275,25 @@ SYNCボタンを押してください
             3
         )
 
-        self.log_event(f"TEXT_{self.current_trial + 1}_END")
+        self.log_event(
+            f"TEXT_{trial_no}_END",
+            trial_id=trial["id"],
+            phase="text",
+            event_type="end"
+        )
 
         self.clear_frame()
-
-        trial = self.stimuli[self.current_trial]
 
         self.selected_answer.set("")
 
         self.question_start_time = time.time()
 
-        self.log_event(f"QUESTION_{self.current_trial + 1}_START")
+        self.log_event(
+            f"QUESTION_{trial_no}_START",
+            trial_id=trial["id"],
+            phase="question",
+            event_type="start"
+        )
 
         tk.Label(
             self.frame,
@@ -271,6 +336,9 @@ SYNCボタンを押してください
             messagebox.showwarning("警告", "選択肢を選んでください")
             return
 
+        trial = self.stimuli[self.current_trial]
+        trial_no = self.current_trial + 1
+
         self.question_end_time = time.time()
 
         self.answer_time_sec = round(
@@ -278,9 +346,23 @@ SYNCボタンを押してください
             3
         )
 
-        self.log_event(f"QUESTION_{self.current_trial + 1}_END")
+        self.log_event(
+            f"QUESTION_{trial_no}_END",
+            trial_id=trial["id"],
+            phase="question",
+            event_type="end"
+        )
 
         self.clear_frame()
+
+        self.questionnaire_start_time = time.time()
+
+        self.log_event(
+            f"QUESTIONNAIRE_{trial_no}_START",
+            trial_id=trial["id"],
+            phase="questionnaire",
+            event_type="start"
+        )
 
         self.understanding.set(3)
         self.confidence.set(3)
@@ -325,6 +407,21 @@ SYNCボタンを押してください
     def save_and_next(self):
 
         trial = self.stimuli[self.current_trial]
+        trial_no = self.current_trial + 1
+
+        self.questionnaire_end_time = time.time()
+
+        self.questionnaire_time_sec = round(
+            self.questionnaire_end_time - self.questionnaire_start_time,
+            3
+        )
+
+        self.log_event(
+            f"QUESTIONNAIRE_{trial_no}_END",
+            trial_id=trial["id"],
+            phase="questionnaire",
+            event_type="end"
+        )
 
         answer = self.selected_answer.get()
 
@@ -334,6 +431,8 @@ SYNCボタンを押してください
         text_end_offset = self.text_end_time - self.experiment_start_time
         question_start_offset = self.question_start_time - self.experiment_start_time
         question_end_offset = self.question_end_time - self.experiment_start_time
+        questionnaire_start_offset = self.questionnaire_start_time - self.experiment_start_time
+        questionnaire_end_offset = self.questionnaire_end_time - self.experiment_start_time
 
         with open(self.result_path, "a", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
@@ -351,14 +450,19 @@ SYNCボタンを押してください
                 self.text_end_time,
                 self.question_start_time,
                 self.question_end_time,
+                self.questionnaire_start_time,
+                self.questionnaire_end_time,
 
                 round(text_start_offset, 3),
                 round(text_end_offset, 3),
                 round(question_start_offset, 3),
                 round(question_end_offset, 3),
+                round(questionnaire_start_offset, 3),
+                round(questionnaire_end_offset, 3),
 
                 self.reading_time_sec,
                 self.answer_time_sec,
+                self.questionnaire_time_sec,
 
                 trial["correct_answer"],
                 answer,
@@ -377,7 +481,12 @@ SYNCボタンを押してください
 
             self.clear_frame()
 
-            self.log_event("EXPERIMENT_END")
+            self.log_event(
+                "EXPERIMENT_END",
+                trial_id="",
+                phase="experiment",
+                event_type="end"
+            )
 
             tk.Label(
                 self.frame,
