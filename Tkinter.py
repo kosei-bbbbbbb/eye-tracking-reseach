@@ -364,47 +364,106 @@ SYNCボタンを押してください
             event_type="start"
         )
 
-        self.understanding.set(3)
-        self.confidence.set(3)
+        # 未選択を判定できるように、初期値は0にする
+        self.understanding.set(0)
+        self.confidence.set(0)
 
+        # =========================
+        # 理解度アンケート
+        # =========================
         tk.Label(
             self.frame,
             text="内容をどの程度理解できましたか？",
             font=("Meiryo", 14)
-        ).pack(pady=10)
-
-        tk.Scale(
-            self.frame,
-            from_=1,
-            to=5,
-            orient="horizontal",
-            variable=self.understanding,
-            length=300
-        ).pack()
+        ).pack(pady=(20, 5))
 
         tk.Label(
             self.frame,
-            text="自分の回答にどの程度自信がありますか？",
-            font=("Meiryo", 14)
-        ).pack(pady=20)
+            text="（文章の内容を自分がどの程度理解できたと思うかで回答してください）",
+            font=("Meiryo", 11)
+        ).pack(pady=(0, 10))
 
-        tk.Scale(
+        understanding_frame = tk.Frame(self.frame)
+        understanding_frame.pack(pady=5)
+
+        understanding_labels = [
+            (1, "1\nほとんど\n理解できない"),
+            (2, "2\n一部しか\n理解できない"),
+            (3, "3\n半分程度\n理解できた"),
+            (4, "4\nほとんど\n理解できた"),
+            (5, "5\n十分\n理解できた")
+        ]
+
+        for value, label in understanding_labels:
+
+            tk.Radiobutton(
+                understanding_frame,
+                text=label,
+                variable=self.understanding,
+                value=value,
+                font=("Meiryo", 11),
+                justify="center",
+                indicatoron=True,
+                width=12
+            ).pack(side="left", padx=8)
+
+        # =========================
+        # 自信度アンケート
+        # =========================
+        tk.Label(
             self.frame,
-            from_=1,
-            to=5,
-            orient="horizontal",
-            variable=self.confidence,
-            length=300
-        ).pack()
+            text="あなたの回答にどの程度自信がありますか？",
+            font=("Meiryo", 14)
+        ).pack(pady=(35, 5))
+
+        tk.Label(
+            self.frame,
+            text="（回答が正しいと思う度合いで選択してください）",
+            font=("Meiryo", 11)
+        ).pack(pady=(0, 10))
+
+        confidence_frame = tk.Frame(self.frame)
+        confidence_frame.pack(pady=5)
+
+        confidence_labels = [
+            (1, "1\n完全な\n運任せ"),
+            (2, "2\nあまり\n自信がない"),
+            (3, "3\nどちらとも\nいえない"),
+            (4, "4\nやや\n自信がある"),
+            (5, "5\n正しいと\n確信している")
+        ]
+
+        for value, label in confidence_labels:
+
+            tk.Radiobutton(
+                confidence_frame,
+                text=label,
+                variable=self.confidence,
+                value=value,
+                font=("Meiryo", 11),
+                justify="center",
+                indicatoron=True,
+                width=12
+            ).pack(side="left", padx=8)
 
         tk.Button(
             self.frame,
             text="次へ",
             font=("Meiryo", 12),
             command=self.save_and_next
-        ).pack(pady=30)
+        ).pack(pady=35)
 
     def save_and_next(self):
+
+        if self.understanding.get() == 0:
+
+            messagebox.showwarning("警告", "理解度を選択してください")
+            return
+
+        if self.confidence.get() == 0:
+
+            messagebox.showwarning("警告", "自信度を選択してください")
+            return
 
         trial = self.stimuli[self.current_trial]
         trial_no = self.current_trial + 1
