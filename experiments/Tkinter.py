@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import csv
 import os
 import time
@@ -65,7 +65,30 @@ class Experiment:
 
     def load_stimuli(self):
 
-        with open("stimuli_with_quiz.csv", "r", encoding="utf-8-sig") as f:
+        csv_path = filedialog.askopenfilename(
+            title="刺激CSVを選択してください",
+            filetypes=[
+                ("CSVファイル", "*.csv"),
+                ("すべてのファイル", "*.*")
+            ]
+        )
+
+        if csv_path == "":
+            messagebox.showerror(
+                "エラー",
+                "CSVが選択されませんでした。"
+            )
+            self.root.destroy()
+            return
+
+        self.csv_path = csv_path
+
+        with open(
+            csv_path,
+            "r",
+            encoding="utf-8-sig"
+        ) as f:
+
             reader = csv.DictReader(f)
             self.stimuli = list(reader)
 
