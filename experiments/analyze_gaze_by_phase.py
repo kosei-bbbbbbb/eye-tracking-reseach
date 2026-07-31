@@ -31,6 +31,8 @@ python analyze_gaze_three_phase.py ^
 import argparse
 from pathlib import Path
 import warnings
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -99,6 +101,83 @@ def prepare_paths(args):
         raise FileNotFoundError(f"trial_summaryが見つかりません: {summary_path}")
 
     return gaze_path, summary_path
+
+
+
+
+def select_paths_with_dialog():
+    """同期済み視線データ、trial_summary、出力先をGUIで選択する。"""
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+        gaze_path = filedialog.askopenfilename(
+            title="synced_gaze_samples.csvを選択してください",
+            filetypes=[("CSV", "*.csv"), ("すべてのファイル", "*.*")],
+            parent=root,
+        )
+        if not gaze_path:
+            raise RuntimeError("視線データの選択がキャンセルされました。")
+
+        gaze_path = Path(gaze_path)
+
+        # 通常は同じフォルダにあるtrial_summary.csvを自動で使う。
+        auto_summary = gaze_path.parent / "trial_summary.csv"
+        if auto_summary.exists():
+            summary_path = auto_summary
+        else:
+            selected_summary = filedialog.askopenfilename(
+                title="trial_summary.csvを選択してください",
+                initialdir=str(gaze_path.parent),
+                filetypes=[("CSV", "*.csv"), ("すべてのファイル", "*.*")],
+                parent=root,
+            )
+            if not selected_summary:
+                raise RuntimeError("trial_summary.csvの選択がキャンセルされました。")
+            summary_path = Path(selected_summary)
+
+        default_out = gaze_path.parent / "analysis_output_three_phase"
+        out_dir = filedialog.askdirectory(
+            title="解析結果の出力先フォルダを選択してください",
+            initialdir=str(gaze_path.parent),
+            parent=root,
+        )
+        if not out_dir:
+            # キャンセル時は同期済みデータと同じ場所に既定フォルダを作る。
+            out_dir = str(default_out)
+
+        return gaze_path, summary_path, Path(out_dir)
+    finally:
+        root.destroy()
+
+
+def show_error_dialog(message):
+    """GUIが利用できる場合にエラーを表示する。"""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        messagebox.showerror("解析エラー", str(message), parent=root)
+        root.destroy()
+    except tk.TclError:
+        pass
+
+
+def show_complete_dialog(out_dir, feature_path, row_count):
+    """GUIが利用できる場合に完了メッセージを表示する。"""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        messagebox.showinfo(
+            "解析完了",
+            f"解析が完了しました。\n\n出力先:\n{out_dir.resolve()}\n\n特徴量CSV:\n{feature_path.name}\n\n行数: {row_count}",
+            parent=root,
+        )
+        root.destroy()
+    except tk.TclError:
+        pass
 
 
 def normalize_phase_value(value):
@@ -460,7 +539,12 @@ def make_phase_average_plots(features, out_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=(
+            "3状態に同期済みの視線データを解析する。"
+            "引数を指定しない場合はファイル選択画面を表示する。"
+        )
+    )
     parser.add_argument(
         "--input_dir",
         default=None,
@@ -468,34 +552,61 @@ def main():
     )
     parser.add_argument("--gaze", default=None, help="synced_gaze_samples.csv のパス")
     parser.add_argument("--summary", default=None, help="trial_summary.csv のパス")
-    parser.add_argument("--out_dir", default="analysis_output_three_phase", help="出力先フォルダ")
+    parser.add_argument("--out_dir", default=None, help="出力先フォルダ")
+    parser.add_argument(
+        "--dialog",
+        action="store_true",
+        help="引数が指定されていてもファイル選択画面を使用する。",
+    )
     args = parser.parse_args()
 
-    if args.input_dir is None and (args.gaze is None or args.summary is None):
-        raise ValueError("--input_dir または --gaze と --summary を指定してください。")
+    use_dialog = args.dialog or (
+        args.input_dir is None
+        and args.gaze is None
+        and args.summary is None
+    )
 
-    gaze_path, summary_path = prepare_paths(args)
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if use_dialog:
+            gaze_path, summary_path, out_dir = select_paths_with_dialog()
+        else:
+            if args.input_dir is None and (args.gaze is None or args.summary is None):
+                raise ValueError(
+                    "--input_dir、または --gaze と --summary の両方を指定してください。"
+                )
 
-    gaze_df = read_csv_safely(gaze_path)
-    summary_df = read_csv_safely(summary_path)
+            gaze_path, summary_path = prepare_paths(args)
+            out_dir = Path(args.out_dir or "analysis_output_three_phase")
 
-    scatter_dir = make_trial_phase_scatter_plots(gaze_df, out_dir)
-    features = build_feature_table_three_phase(gaze_df, summary_df)
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    feature_path = out_dir / "basic_gaze_features_three_phase.csv"
-    features.to_csv(feature_path, index=False, encoding="utf-8-sig")
+        gaze_df = read_csv_safely(gaze_path)
+        summary_df = read_csv_safely(summary_path)
 
-    make_summary_plots(features, out_dir)
-    make_phase_average_plots(features, out_dir)
+        scatter_dir = make_trial_phase_scatter_plots(gaze_df, out_dir)
+        features = build_feature_table_three_phase(gaze_df, summary_df)
+
+        feature_path = out_dir / "basic_gaze_features_three_phase.csv"
+        features.to_csv(feature_path, index=False, encoding="utf-8-sig")
+
+        make_summary_plots(features, out_dir)
+        make_phase_average_plots(features, out_dir)
+
+    except RuntimeError as exc:
+        print(f"処理を中止しました: {exc}")
+        return
+    except Exception as exc:
+        print(f"エラー: {exc}")
+        show_error_dialog(exc)
+        return
 
     print("解析が完了しました。")
-    print(f"出力先: {out_dir}")
+    print(f"同期済み視線データ: {gaze_path}")
+    print(f"試行要約データ: {summary_path}")
+    print(f"出力先: {out_dir.resolve()}")
     print(f"Trial×phaseごとの散布図: {scatter_dir}")
     print(f"特徴量CSV: {feature_path}")
     print(f"特徴量の行数: {len(features)}")
-    print("6試行で text/question/questionnaire がすべてあれば、18行になります。")
     print("作成される主な画像:")
     print("- duration_by_trial_phase.png")
     print("- fixation_count_by_trial_phase.png")
@@ -507,6 +618,8 @@ def main():
     if len(features) > 0:
         print("\n行数確認:")
         print(features.groupby("phase").size().to_string())
+
+    show_complete_dialog(out_dir, feature_path, len(features))
 
 
 if __name__ == "__main__":
