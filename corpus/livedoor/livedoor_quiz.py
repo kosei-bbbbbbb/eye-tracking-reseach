@@ -796,7 +796,10 @@ def main() -> None:
     grouped_rows = group_rows_by_condition(
         source_rows
     )
-
+    # 各難易度内をランダムに並べ替える
+    random.shuffle(grouped_rows["hard"])
+    random.shuffle(grouped_rows["medium"])
+    random.shuffle(grouped_rows["easy"])
     # =====================================
     # hard → medium → easyに並べる
     # =====================================
