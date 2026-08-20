@@ -1,0 +1,4 @@
+﻿condition,num_trials,mean_confidence,std_confidence
+easy,2,3.0,2.8284271247461903
+hard,2,4.5,0.7071067811865476
+medium,2,2.5,2.1213203435596424

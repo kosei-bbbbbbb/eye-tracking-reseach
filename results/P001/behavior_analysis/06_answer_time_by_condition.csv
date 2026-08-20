@@ -1,0 +1,4 @@
+﻿condition,num_trials,mean_answer_time_sec,std_answer_time_sec
+easy,2,11.886,1.460882609931407
+hard,2,19.093,4.072935059634513
+medium,2,19.5205,1.8844395718621523

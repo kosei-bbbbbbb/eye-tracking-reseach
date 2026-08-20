@@ -1,0 +1,4 @@
+﻿condition,num_trials,num_correct,accuracy,num_incorrect,accuracy_percent
+easy,2,2,1.0,0,100.0
+hard,2,2,1.0,0,100.0
+medium,2,1,0.5,1,50.0

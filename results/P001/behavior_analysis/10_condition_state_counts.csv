@@ -1,0 +1,4 @@
+﻿condition,appropriate_understanding,low_confidence_correct,overconfidence,non_understanding,other
+easy,1,1,0,0,0
+medium,1,0,0,1,0
+hard,2,0,0,0,0

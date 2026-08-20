@@ -1,0 +1,3 @@
+﻿correct,num_trials,mean_understanding,std_understanding,mean_confidence,std_confidence,mean_reading_time_sec,mean_reading_speed,mean_answer_time_sec,correct_label
+0,1,2.0,,1.0,,28.946,17.342638015615282,20.853,incorrect
+1,5,4.0,0.7071067811865475,3.8,1.6431676725154984,32.80499999999999,16.37297972296771,16.0292,correct

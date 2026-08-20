@@ -1,0 +1,7 @@
+﻿participant_id,trial_id,condition,score,length,correct_answer,participant_answer,correct,understanding,confidence,reading_time_sec,reading_speed_char_per_sec,answer_time_sec,state
+P001,0,hard,2.305439382,435,A,A,1,5,5,33.501,12.984687024267933,16.213,appropriate_understanding
+P001,1,medium,4.218095238,554,C,C,1,4,4,33.916,16.334473404882655,18.188,appropriate_understanding
+P001,2,easy,4.932555556,595,C,C,1,4,1,28.482,20.89038691103153,12.919,low_confidence_correct
+P001,3,hard,2.278212373,581,A,A,1,3,4,31.906,18.209741114523915,21.973,appropriate_understanding
+P001,4,medium,3.461222222,502,D,B,0,2,1,28.946,17.342638015615282,20.853,non_understanding
+P001,5,easy,4.556765258,487,B,B,1,4,5,36.22,13.445610160132524,10.853,appropriate_understanding

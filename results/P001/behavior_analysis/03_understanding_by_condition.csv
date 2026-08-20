@@ -1,0 +1,4 @@
+﻿condition,num_trials,mean_understanding,std_understanding
+easy,2,4.0,0.0
+hard,2,4.0,1.4142135623730951
+medium,2,3.0,1.4142135623730951
