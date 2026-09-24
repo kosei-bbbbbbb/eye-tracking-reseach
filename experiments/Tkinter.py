@@ -20,7 +20,7 @@ class Experiment:
         self.stimuli = []
 
         # 被験者ID。P002などに変える場合はここを変更する。
-        self.participant_id = "P002"
+        self.participant_id = "P001"
 
         # 実験全体の開始時刻
         self.experiment_start_time = None
@@ -91,6 +91,127 @@ class Experiment:
 
             reader = csv.DictReader(f)
             self.stimuli = list(reader)
+
+        # 被験者IDに応じて6問の提示順を変更
+        self.apply_counterbalance()
+
+    def apply_counterbalance(self):
+
+        # 難易度ごとに刺激を分ける
+        easy = [
+            stimulus for stimulus in self.stimuli
+            if stimulus["condition"].strip().lower() == "easy"
+        ]
+        medium = [
+            stimulus for stimulus in self.stimuli
+            if stimulus["condition"].strip().lower() == "medium"
+        ]
+        hard = [
+            stimulus for stimulus in self.stimuli
+            if stimulus["condition"].strip().lower() == "hard"
+        ]
+
+        # 予備実験は各難易度2問、合計6問を前提とする
+        if len(easy) != 2 or len(medium) != 2 or len(hard) != 2:
+            messagebox.showerror(
+                "刺激数エラー",
+                "予備実験では各難易度2問ずつ必要です。\\n\\n"
+                f"Easy: {len(easy)}問\\n"
+                f"Medium: {len(medium)}問\\n"
+                f"Hard: {len(hard)}問"
+            )
+            self.root.destroy()
+            return
+
+        # 同一難易度内でのE1/E2等を刺激ID順に固定する
+        # CSVの行順が変わっても提示パターンが変化しないようにする
+        def stimulus_sort_key(stimulus):
+            stimulus_id = stimulus.get("id", "").strip()
+            if stimulus_id.isdigit():
+                return (0, int(stimulus_id))
+            return (1, stimulus_id)
+
+        easy.sort(key=stimulus_sort_key)
+        medium.sort(key=stimulus_sort_key)
+        hard.sort(key=stimulus_sort_key)
+
+        # P001 -> 1, P002 -> 2, ... を取得
+        participant_id = self.participant_id.strip().upper()
+
+        if not (
+            participant_id.startswith("P")
+            and participant_id[1:].isdigit()
+        ):
+            messagebox.showerror(
+                "被験者IDエラー",
+                "被験者IDは P001 のような形式にしてください。"
+            )
+            self.root.destroy()
+            return
+
+        participant_number = int(participant_id[1:])
+
+        if participant_number <= 0:
+            messagebox.showerror(
+                "被験者IDエラー",
+                "被験者番号は1以上にしてください。"
+            )
+            self.root.destroy()
+            return
+
+        # 6種類の提示パターン
+        patterns = [
+            # P001
+            [
+                easy[0], medium[0], hard[0],
+                easy[1], medium[1], hard[1]
+            ],
+            # P002
+            [
+                medium[0], hard[0], easy[0],
+                medium[1], hard[1], easy[1]
+            ],
+            # P003
+            [
+                hard[0], easy[0], medium[0],
+                hard[1], easy[1], medium[1]
+            ],
+            # P004
+            [
+                easy[1], hard[1], medium[1],
+                easy[0], hard[0], medium[0]
+            ],
+            # P005
+            [
+                hard[1], medium[1], easy[1],
+                hard[0], medium[0], easy[0]
+            ],
+            # P006
+            [
+                medium[1], easy[1], hard[1],
+                medium[0], easy[0], hard[0]
+            ],
+        ]
+
+        # P007以降は再びパターン1から繰り返す
+        pattern_index = (participant_number - 1) % len(patterns)
+        self.stimuli = patterns[pattern_index]
+
+        # 実験開始前にターミナルで提示順を確認できるようにする
+        print()
+        print("========== 提示順 ==========")
+        print(f"被験者ID: {self.participant_id}")
+        print(f"パターン: {pattern_index + 1}")
+
+        for i, stimulus in enumerate(self.stimuli, start=1):
+            print(
+                f"{i}: "
+                f"ID={stimulus['id']} / "
+                f"{stimulus['condition']}"
+            )
+
+        print("============================")
+        print()
 
     def create_result_file(self):
 
