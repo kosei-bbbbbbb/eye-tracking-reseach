@@ -55,7 +55,7 @@ MODEL_NAME = "gemini-2.5-flash"
 # hard → medium → easyが2周分生成される
 #
 # 全件生成する場合は None にする
-MAX_ARTICLES = 6
+MAX_ARTICLES = 1
 
 # 1記事あたりの再試行回数
 MAX_RETRIES = 3
