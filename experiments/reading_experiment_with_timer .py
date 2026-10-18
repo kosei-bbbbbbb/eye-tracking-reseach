@@ -534,7 +534,7 @@ SYNCボタンを押してください
 
             self.frame,
 
-            wrap="word",
+            wrap="char",
 
             font=("Meiryo", 14),
 
@@ -546,7 +546,12 @@ SYNCボタンを押してください
 
         text_widget.pack(expand=True)
 
-        text_widget.insert("1.0", trial["text"])
+        # 元の改行を除去し、表示欄の右端だけで折り返す。
+        # 英単語の途中にある改行は、単語の連結を避けるため空白にする。
+        import re
+        display_text = re.sub(r"(?<=[A-Za-z0-9])\r?\n(?=[A-Za-z0-9])", " ", trial["text"])
+        display_text = "".join(display_text.splitlines())
+        text_widget.insert("1.0", display_text)
 
         text_widget.config(state="disabled")
 

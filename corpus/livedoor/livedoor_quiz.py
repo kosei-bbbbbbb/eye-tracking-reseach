@@ -36,7 +36,7 @@ BASE_DIR = os.path.dirname(
 
 INPUT_CSV = os.path.join(
     BASE_DIR,
-    "selected_articles.csv"
+    "selected_articles_original_only.csv"
 )
 
 OUTPUT_CSV = os.path.join(
