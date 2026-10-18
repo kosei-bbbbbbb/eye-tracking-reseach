@@ -31,7 +31,7 @@ class Experiment:
 
         # 被験者ID。P002などに変える場合はここを変更する。
 
-        self.participant_id = "P001"
+        self.participant_id = "P002"
 
         # 実験全体の開始時刻
 

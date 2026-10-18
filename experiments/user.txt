@@ -1,0 +1,3 @@
+１．sync_gaze_events_4_phase_resend.pyで同期
+２．その後analyze_gaze_four_pgase.pyで同期したものを解析
+３．analyze_behavior_preconfidence.pyは問題の結果とアンケートの結果とかをまとめる使うファイルはP001.csv
