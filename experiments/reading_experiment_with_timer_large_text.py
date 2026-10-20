@@ -1,4 +1,5 @@
 import tkinter as tk
+import tkinter.font as tkfont
 
 from tkinter import messagebox, filedialog, simpledialog
 
@@ -8,6 +9,11 @@ import os
 
 import time
 import random
+
+# 本文表示設定。負のフォントサイズを使い、Windowsのpt指定と区別する。
+READING_FONT_PX = 32
+READING_LINE_PITCH_PX = 60
+READING_MAX_WIDTH_PX = 1720
 
 class Experiment:
 
@@ -20,6 +26,11 @@ class Experiment:
         print("=== 問題前自信度あり版を実行中 ===")
 
         self.root.geometry("1000x700")
+        # 画面全体を使い、大きな本文と行間を確保する。
+        try:
+            self.root.state("zoomed")
+        except tk.TclError:
+            self.root.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
 
         # Escキーで強制終了確認
 
@@ -31,7 +42,7 @@ class Experiment:
 
         # 被験者ID。P002などに変える場合はここを変更する。
 
-        self.participant_id = "P001"
+        self.participant_id = "P002"
 
         # 実験全体の開始時刻
 
@@ -44,6 +55,11 @@ class Experiment:
         self.text_end_time = None
 
         self.reading_time_sec = None
+
+        # 読書画面の経過時間表示用（計測にはmonotonicを使用）
+        self.reading_start_monotonic = None
+        self.reading_timer_job = None
+        self.reading_timer_label = None
 
         # 問題前評価画面の時刻
 
@@ -395,8 +411,24 @@ class Experiment:
 
             ])
 
+    def stop_reading_timer(self):
+        """画面切り替え時に古いタイマー更新を停止する。"""
+        if self.reading_timer_job is not None:
+            self.root.after_cancel(self.reading_timer_job)
+            self.reading_timer_job = None
+
+    def update_reading_timer(self):
+        """読書画面に経過時間を0.1秒単位で表示する。"""
+        if self.reading_start_monotonic is None or self.reading_timer_label is None:
+            return
+        elapsed = time.monotonic() - self.reading_start_monotonic
+        minutes, seconds = divmod(elapsed, 60)
+        self.reading_timer_label.config(text=f"読解経過時間  {int(minutes):02d}:{seconds:04.1f}")
+        self.reading_timer_job = self.root.after(100, self.update_reading_timer)
+
     def clear_frame(self):
 
+        self.stop_reading_timer()
         if self.frame:
 
             self.frame.destroy()
@@ -466,6 +498,7 @@ SYNCボタンを押してください
         trial_no = self.current_trial + 1
 
         self.text_start_time = time.time()
+        self.reading_start_monotonic = time.monotonic()
 
         self.log_event(
 
@@ -499,38 +532,60 @@ SYNCボタンを押してください
 
         ).pack(pady=5)
 
-        text_widget = tk.Text(
-
+        self.reading_timer_label = tk.Label(
             self.frame,
-
-            wrap="word",
-
-            font=("Meiryo", 14),
-
-            width=55,
-
-            height=25
-
+            text="読解経過時間  00:00.0",
+            font=("Meiryo", 16, "bold"),
+            fg="#245a8d"
         )
+        self.reading_timer_label.pack(pady=(5, 10))
+        self.update_reading_timer()
 
-        text_widget.pack(expand=True)
+        # ボタンの領域を先に確保し、本文が長くても画面外へ押し出さない。
+        tk.Button(
+            self.frame, text="読み終わった", font=("Meiryo", 12),
+            command=self.show_preconfidence
+        ).pack(side="bottom", pady=(10, 0))
 
-        text_widget.insert("1.0", trial["text"])
+        body_font = tkfont.Font(family="Meiryo", size=-READING_FONT_PX)
+        # linespaceにはフォント固有の高さが含まれる。追加する余白との差を取る。
+        extra_spacing = max(0, READING_LINE_PITCH_PX - body_font.metrics("linespace"))
+        self.root.update_idletasks()
+        body_width = min(READING_MAX_WIDTH_PX, max(200, self.frame.winfo_width() - 40))
+        body = tk.Frame(self.frame, width=body_width)
+        body.pack(fill="y", expand=True, pady=(0, 4))
+        body.pack_propagate(False)
+        scrollbar = tk.Scrollbar(body, orient="vertical")
+        text_widget = tk.Text(
+            body, wrap="char", font=body_font, width=1, height=1,
+            spacing1=0, spacing2=extra_spacing, spacing3=extra_spacing,
+            padx=16, pady=10, borderwidth=1, relief="solid",
+            background="white", foreground="black", cursor="arrow",
+            yscrollcommand=scrollbar.set
+        )
+        # Tkフォントを画面表示中保持する。
+        text_widget.body_font = body_font
+        text_widget.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=text_widget.yview)
+
+        # 元の改行を除去し、表示欄の右端だけで折り返す。
+        # 英単語の途中にある改行は、単語の連結を避けるため空白にする。
+        import re
+        display_text = re.sub(r"(?<=[A-Za-z0-9])\r?\n(?=[A-Za-z0-9])", " ", trial["text"])
+        display_text = "".join(display_text.splitlines())
+        text_widget.insert("1.0", display_text)
 
         text_widget.config(state="disabled")
 
-        tk.Button(
-
-            self.frame,
-
-            text="読み終わった",
-
-            font=("Meiryo", 12),
-
-            command=self.show_preconfidence
-
-        ).pack(pady=20)
-
+        self.root.update_idletasks()
+        # 小さい画面や長文でも、末尾を隠したまま実験を進めない。
+        if text_widget.yview()[1] < 0.999:
+            scrollbar.pack(side="right", fill="y")
+            messagebox.showwarning(
+                "本文の表示範囲",
+                "本文が1画面に収まりません。スクロールで全文を読めます。\n"
+                "本実験前に、文章長・画面サイズ・本文表示設定を調整してください。"
+            )
     def show_preconfidence(self):
 
         trial = self.stimuli[self.current_trial]
@@ -539,7 +594,12 @@ SYNCボタンを押してください
 
         self.text_end_time = time.time()
 
-        self.reading_time_sec = round(self.text_end_time - self.text_start_time, 3)
+        self.reading_time_sec = round(
+            time.monotonic() - self.reading_start_monotonic, 3
+        )
+        self.stop_reading_timer()
+        self.reading_timer_label = None
+        self.reading_start_monotonic = None
 
         self.log_event(
 
