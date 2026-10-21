@@ -17,7 +17,7 @@ except ImportError:
     winsound = None
 
 # 本文表示設定。負のフォントサイズを使い、Windowsのpt指定と区別する。
-READING_TIME_LIMIT_SEC = 25
+READING_TIME_LIMIT_SEC = 30
 READING_WARNING_SECONDS = (15, 5)
 
 READING_FONT_PX = 32
