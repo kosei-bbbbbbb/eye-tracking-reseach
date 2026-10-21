@@ -9,8 +9,17 @@ import os
 
 import time
 import random
+import threading
+
+try:
+    import winsound
+except ImportError:
+    winsound = None
 
 # 本文表示設定。負のフォントサイズを使い、Windowsのpt指定と区別する。
+READING_TIME_LIMIT_SEC = 25
+READING_WARNING_SECONDS = (15, 5)
+
 READING_FONT_PX = 32
 READING_LINE_PITCH_PX = 60
 READING_MAX_WIDTH_PX = 1720
@@ -417,14 +426,39 @@ class Experiment:
             self.root.after_cancel(self.reading_timer_job)
             self.reading_timer_job = None
 
-    def update_reading_timer(self):
-        """読書画面に経過時間を0.1秒単位で表示する。"""
-        if self.reading_start_monotonic is None or self.reading_timer_label is None:
+    def play_reading_sound(self, remaining):
+        """Windowsのビープ音を別スレッドで鳴らし、GUIを止めない。"""
+        if winsound is None:
+            self.root.bell()
             return
-        elapsed = time.monotonic() - self.reading_start_monotonic
-        minutes, seconds = divmod(elapsed, 60)
-        self.reading_timer_label.config(text=f"読解経過時間  {int(minutes):02d}:{seconds:04.1f}")
-        self.reading_timer_job = self.root.after(100, self.update_reading_timer)
+
+        def play():
+            try:
+                winsound.Beep(880 if remaining == 15 else 1320, 180)
+            except RuntimeError as exc:
+                print(f"通知音の再生に失敗しました: {exc}")
+        threading.Thread(target=play, daemon=True).start()
+
+    def update_reading_timer(self):
+        """時刻差で残り時間を判定。表示せず、15秒・5秒で各1回通知する。"""
+        self.reading_timer_job = None
+        if self.reading_start_monotonic is None:
+            return
+        remaining = READING_TIME_LIMIT_SEC - (time.monotonic() - self.reading_start_monotonic)
+        trial = self.stimuli[self.current_trial]
+        trial_no = self.current_trial + 1
+        if remaining <= 0:
+            self.log_event(f"TEXT_{trial_no}_TIMEOUT", trial_id=trial["id"],
+                           phase="text", event_type="timeout")
+            self.show_preconfidence()
+            return
+        for threshold in READING_WARNING_SECONDS:
+            if remaining <= threshold and threshold not in self.reading_warnings_sent:
+                self.reading_warnings_sent.add(threshold)
+                self.log_event(f"TEXT_{trial_no}_AUDIO_REQUEST_REMAINING_{threshold}S",
+                               trial_id=trial["id"], phase="text", event_type="audio_request")
+                self.play_reading_sound(threshold)
+        self.reading_timer_job = self.root.after(25, self.update_reading_timer)
 
     def clear_frame(self):
 
@@ -497,21 +531,6 @@ SYNCボタンを押してください
 
         trial_no = self.current_trial + 1
 
-        self.text_start_time = time.time()
-        self.reading_start_monotonic = time.monotonic()
-
-        self.log_event(
-
-            f"TEXT_{trial_no}_START",
-
-            trial_id=trial["id"],
-
-            phase="text",
-
-            event_type="start"
-
-        )
-
         tk.Label(
 
             self.frame,
@@ -532,15 +551,7 @@ SYNCボタンを押してください
 
         ).pack(pady=5)
 
-        self.reading_timer_label = tk.Label(
-            self.frame,
-            text="読解経過時間  00:00.0",
-            font=("Meiryo", 16, "bold"),
-            fg="#245a8d"
-        )
-        self.reading_timer_label.pack(pady=(5, 10))
-        self.update_reading_timer()
-
+        # 時間表示は置かず、通知音で残り時間を伝える。
         # ボタンの領域を先に確保し、本文が長くても画面外へ押し出さない。
         tk.Button(
             self.frame, text="読み終わった", font=("Meiryo", 12),
@@ -586,7 +597,30 @@ SYNCボタンを押してください
                 "本文が1画面に収まりません。スクロールで全文を読めます。\n"
                 "本実験前に、文章長・画面サイズ・本文表示設定を調整してください。"
             )
+        # 描画と警告ダイアログが終わってから、計測と開始イベントをそろえる。
+        self.root.update_idletasks()
+        self.reading_warnings_sent = set()
+        self.text_start_time = time.time()
+        self.reading_start_monotonic = time.monotonic()
+
+        self.log_event(
+
+            f"TEXT_{trial_no}_START",
+
+            trial_id=trial["id"],
+
+            phase="text",
+
+            event_type="start"
+
+        )
+
+        self.update_reading_timer()
+
     def show_preconfidence(self):
+        # 手動終了と時間切れの二重遷移を防ぐ。
+        if self.reading_start_monotonic is None:
+            return
 
         trial = self.stimuli[self.current_trial]
 
