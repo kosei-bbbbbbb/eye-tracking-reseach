@@ -49,8 +49,6 @@ class Experiment:
         self.root.bind("<Escape>", self.force_exit)
 
         self.current_trial = 0
-        self.break_requested = False
-        self.break_request_button = None
         self.active_segment_start = None  # monotonic; 休憩終了後にリセット
         self.break_start_monotonic = None
         self.break_reason = None
@@ -162,6 +160,65 @@ class Experiment:
 
         self.frame = None
 
+        self.show_demographics_screen()
+
+    def show_demographics_screen(self):
+        """練習開始前に参加者属性を1回だけ取得する（視線計測なし）。"""
+        self.clear_frame()
+        tk.Label(self.frame, text="参加者情報の入力", font=("Meiryo", 22, "bold")).pack(pady=(65, 18))
+        tk.Label(self.frame, text="実験を始める前に、年齢と性別を回答してください。\n"
+                 "回答は参加者IDと対応させて保存します。",
+                 font=("Meiryo", 14), justify="center").pack(pady=12)
+
+        form = tk.Frame(self.frame)
+        form.pack(pady=25)
+        tk.Label(form, text="年齢（満年齢）", font=("Meiryo", 15)).grid(row=0, column=0, sticky="e", padx=18, pady=18)
+        self.age_entry = tk.Entry(form, width=8, font=("Meiryo", 16), justify="center")
+        self.age_entry.grid(row=0, column=1, sticky="w", pady=18)
+        tk.Label(form, text="歳", font=("Meiryo", 14)).grid(row=0, column=2, sticky="w", padx=8)
+
+        tk.Label(form, text="性別", font=("Meiryo", 15)).grid(row=1, column=0, sticky="ne", padx=18, pady=18)
+        self.gender_var = tk.StringVar(value="")
+        gender_frame = tk.Frame(form)
+        gender_frame.grid(row=1, column=1, columnspan=2, sticky="w", pady=10)
+        for choice in ("男性", "女性", "その他"):
+            tk.Radiobutton(gender_frame, text=choice, variable=self.gender_var,
+                           value=choice, font=("Meiryo", 13)).pack(anchor="w", pady=3)
+
+        tk.Button(self.frame, text="回答して練習へ進む", font=("Meiryo", 15),
+                  command=self.save_demographics_and_continue).pack(pady=20)
+        self.age_entry.focus_set()
+
+    def save_demographics_and_continue(self):
+        age_text = self.age_entry.get().strip()
+        if not age_text.isascii() or not age_text.isdecimal():
+            messagebox.showwarning("入力の確認", "年齢を数字で入力してください。", parent=self.root)
+            return
+        age = int(age_text)
+        if not 1 <= age <= 120:
+            messagebox.showwarning("入力の確認", "年齢は1～120歳で入力してください。", parent=self.root)
+            return
+        gender = self.gender_var.get()
+        if gender not in ("男性", "女性", "その他"):
+            messagebox.showwarning("入力の確認", "性別を選択してください。", parent=self.root)
+            return
+
+        # 参加者属性を別CSVにも保存し、各試行の回答CSVにも記録する。
+        path = os.path.join(self.participant_dir, f"{self.participant_id}_demographics.csv")
+        if os.path.exists(path):
+            messagebox.showerror("保存先の重複", "参加者情報が既に保存されています。\n"
+                                 "被験者IDを確認してください。\n" + path, parent=self.root)
+            return
+        try:
+            with open(path, "x", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(["participant_id", "age", "gender"])
+                writer.writerow([self.participant_id, age, gender])
+        except OSError as exc:
+            messagebox.showerror("保存エラー", str(exc), parent=self.root)
+            return
+        self.participant_age = age
+        self.participant_gender = gender
         self.show_practice_start_screen()
 
     def force_exit(self, event=None):
@@ -451,6 +508,10 @@ class Experiment:
 
                     "participant_id",
 
+                    "age",
+
+                    "gender",
+
                     "trial_id",
 
                     "condition",
@@ -692,29 +753,6 @@ class Experiment:
         self.frame = tk.Frame(self.root)
 
         self.frame.pack(fill="both", expand=True, padx=20, pady=20)
-        # 休憩の申し出はいつでも可能。計測中の試行は完了させてから休憩する。
-        if not self.is_practice and self.active_segment_start is not None and self.break_start_monotonic is None and self.short_break_start_monotonic is None:
-            self.break_request_button = tk.Button(
-                self.frame, text="この問題が終わったら休憩する",
-                font=("Meiryo", 11), command=self.request_break
-            )
-            self.break_request_button.pack(side="bottom", pady=(5, 0))
-            self.update_break_request_button()
-        else:
-            self.break_request_button = None
-
-    def update_break_request_button(self):
-        if self.break_request_button is not None:
-            self.break_request_button.config(
-                text="休憩を予約済み（この問題の終了後）" if self.break_requested
-                else "この問題が終わったら休憩する"
-            )
-
-    def request_break(self):
-        """問題の途中で視線計測を止めず、終了後に休憩する。"""
-        self.break_requested = not self.break_requested
-        self.update_break_request_button()
-
     def show_short_break_screen(self):
         """試行間の60秒休憩。Tobii録画は終了せず同じ録画を継続する。"""
         if self.short_break_start_monotonic is not None:
@@ -773,7 +811,7 @@ class Experiment:
         self.log_event("BREAK_START", trial_id="", phase="break", event_type=reason)
         self.log_event(f"RECORDING_SEGMENT_{self.recording_segment:02d}_END", trial_id="", phase="recording", event_type="end")
         self.clear_frame()
-        reason_text = "実験時間が約1時間に達しました。" if reason == "scheduled" else "参加者から休憩の希望がありました。"
+        reason_text = "実験時間が約1時間に達しました。"
         tk.Label(self.frame, text=(
             f"{reason_text}\n\n"
             f"完了: {self.current_trial} / {len(self.stimuli)} 問\n\n"
@@ -824,7 +862,6 @@ class Experiment:
         print(f"休憩終了: {elapsed:.1f}秒 / 理由: {self.break_reason}")
         self.break_start_monotonic = None
         self.break_reason = None
-        self.break_requested = False
         self.active_segment_start = time.monotonic()
         self.short_break_count = 0
         self.show_text()
@@ -1548,6 +1585,10 @@ class Experiment:
 
                 self.participant_id,
 
+                self.participant_age,
+
+                self.participant_gender,
+
                 trial["id"],
 
                 trial["condition"],
@@ -1650,13 +1691,10 @@ class Experiment:
 
             return
 
-        # 1時間の自動休憩も、疲労による任意休憩も試行と試行の間で開始する。
+        # 1時間の定期休憩は試行と試行の間で開始する。
         # 休憩時間は次の1時間の計測に含めない。
         if not self.is_practice:
             elapsed = time.monotonic() - self.active_segment_start
-            if self.break_requested:
-                self.show_break_screen("manual")
-                return
             if elapsed >= BREAK_INTERVAL_SEC:
                 self.show_break_screen("scheduled")
                 return
