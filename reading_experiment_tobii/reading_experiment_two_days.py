@@ -2,6 +2,9 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox, filedialog, simpledialog
 import csv
+import json
+import re
+from pathlib import Path
 import os
 import time
 import random
@@ -21,16 +24,42 @@ READING_WARNING_SECONDS = (15, 5)
 READING_FONT_PX = 32
 READING_LINE_PITCH_PX = 60
 READING_MAX_WIDTH_PX = 1720
+CONDITIONS = ("easy", "medium", "hard")
+STIMULUS_COLUMNS = (
+    "id", "condition", "score", "length", "text", "question",
+    "choice_A", "choice_B", "choice_C", "choice_D", "correct_answer",
+)
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+
+def make_qpc_clock():
+    """Windows QPCをPro LabのComputer timestampと同じマイクロ秒で記録する。"""
+    if os.name != "nt":
+        return lambda: None
+    import ctypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    frequency = ctypes.c_longlong()
+    if not kernel32.QueryPerformanceFrequency(ctypes.byref(frequency)):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    def read_qpc_us():
+        ticks = ctypes.c_longlong()
+        if not kernel32.QueryPerformanceCounter(ctypes.byref(ticks)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return ticks.value * 1_000_000 // frequency.value
+
+    return read_qpc_us
+
 
 class Experiment:
 
     def __init__(self, root):
 
         self.root = root
+        self.read_qpc_us = make_qpc_clock()
 
-        self.root.title("Reading Experiment - PRECONFIDENCE VERSION")
+        self.root.title("Reading Experiment - 2日間実施版")
 
-        print("=== 問題前自信度あり版を実行中 ===")
+        print("=== 2日間実施版を実行中 ===")
 
         self.root.geometry("1000x700")
 
@@ -47,6 +76,7 @@ class Experiment:
         # Escキーで強制終了確認
 
         self.root.bind("<Escape>", self.force_exit)
+        self.root.protocol("WM_DELETE_WINDOW", self.force_exit)
 
         self.current_trial = 0
         self.active_segment_start = None  # monotonic; 休憩終了後にリセット
@@ -58,10 +88,6 @@ class Experiment:
         self.short_break_timer_job = None
 
         self.stimuli = []
-
-        # 被験者ID。P002などに変える場合はここを変更する。
-
-        self.participant_id = "P002"
 
         # 実験全体の開始時刻
 
@@ -123,44 +149,148 @@ class Experiment:
 
         self.screen_height = root.winfo_screenheight()
 
-        if not self.load_stimuli():
-
+        self.frame = None
+        try:
+            if not self.configure_session():
+                self.root.destroy()
+                return
+        except (OSError, ValueError, csv.Error) as exc:
+            messagebox.showerror("実験の準備エラー", str(exc), parent=self.root)
             self.root.destroy()
-
             return
 
-        if not self.load_practice_stimuli():
-            self.root.destroy()
-            return
+        if self.session_day == 1:
+            self.show_demographics_screen()
+        else:
+            self.show_practice_start_screen()
 
-        self.main_stimuli = list(self.stimuli)
+    def configure_session(self):
+        participant = simpledialog.askstring(
+            "参加者ID", "参加者IDを入力してください（例 P001）。", parent=self.root
+        )
+        if participant is None:
+            return False
+        match = re.fullmatch(r"P([0-9]{1,9})", participant.strip().upper())
+        if not match or int(match[1]) == 0:
+            raise ValueError("参加者IDはP001のような形式にしてください。")
+        self.participant_number = int(match[1])
+        self.participant_id = f"P{self.participant_number:03d}"
+        self.session_day = simpledialog.askinteger(
+            "実施日", "初日は1、2日目は2を入力してください。",
+            minvalue=1, maxvalue=2, parent=self.root
+        )
+        if self.session_day is None:
+            return False
+
+        self.participant_dir = RESULTS_DIR / self.participant_id / "two_day"
+        self.session_dir = self.participant_dir / f"day{self.session_day}"
+        self.plan_path = self.participant_dir / f"{self.participant_id}_session_plan.json"
+        self.demographics_path = self.participant_dir / f"{self.participant_id}_demographics.csv"
+        self.session_prefix = f"{self.participant_id}_day{self.session_day}"
+        if self.session_dir.exists():
+            raise ValueError(
+                f"{self.session_day}日目の保存先が既に存在します。"
+                f"記録を確認してください。\n{self.session_dir}"
+            )
+
+        if self.session_day == 1:
+            if not self.load_stimuli() or not self.load_practice_stimuli():
+                return False
+            days = self.apply_counterbalance()
+            self.plan = {
+                "participant_id": self.participant_id,
+                "days": days,
+                "practice": self.practice_stimuli,
+            }
+        else:
+            self.plan = self.load_session_plan()
+            self.load_day_one_results()
+
+        today = self.plan["days"][self.session_day - 1]
+        self.session_set = today["set"]
+        self.main_stimuli = today["stimuli"]
+        self.practice_stimuli = self.plan["practice"]
+        self.root.title(
+            f"Reading Experiment - {self.participant_id} / {self.session_day}日目 / "
+            f"セット{self.session_set} / {len(self.main_stimuli)}問"
+        )
+        self.is_practice = True
+        self.stimuli = self.practice_stimuli
+        return True
+
+    def load_session_plan(self):
+        if not self.plan_path.is_file():
+            raise ValueError("この参加者の初日の出題計画が見つかりません。")
+        with self.plan_path.open(encoding="utf-8") as f:
+            plan = json.load(f)
+        try:
+            if (plan["participant_id"] != self.participant_id
+                    or len(plan["days"]) != 2
+                    or {day["set"] for day in plan["days"]} != {"A", "B"}
+                    or any(not day["stimuli"] for day in plan["days"])
+                    or len(plan["practice"]) != 3):
+                raise ValueError("保存した出題計画の内容が一致しません。")
+            rows = plan["days"][0]["stimuli"] + plan["days"][1]["stimuli"] + plan["practice"]
+            if (any(not all(isinstance(row[key], str) and row[key].strip()
+                            for key in STIMULUS_COLUMNS) for row in rows)
+                    or len({row["id"] for row in rows}) != len(rows)):
+                raise ValueError("保存した出題計画に空欄または重複IDがあります。")
+        except (KeyError, TypeError) as exc:
+            raise ValueError("保存した出題計画を読み込めません。") from exc
+        return plan
+
+    def load_day_one_results(self):
+        day_one = self.participant_dir / "day1"
+        prefix = f"{self.participant_id}_day1"
+        expected = [row["id"] for row in self.plan["days"][0]["stimuli"]]
+        results = day_one / f"{prefix}.csv"
+        events = day_one / f"{prefix}_events.csv"
+        if not results.is_file() or not events.is_file():
+            raise ValueError("初日の行動ログまたはイベントログが見つかりません。")
+        with results.open(newline="", encoding="utf-8-sig") as f:
+            actual = [(row.get("participant_id"), row.get("trial_id")) for row in csv.DictReader(f)]
+        with events.open(newline="", encoding="utf-8-sig") as f:
+            last_event = None
+            for row in csv.DictReader(f):
+                last_event = row.get("event")
+        if (actual != [(self.participant_id, trial_id) for trial_id in expected]
+                or last_event != "EXPERIMENT_END"):
+            raise ValueError("初日の全試行が完了していません。初日の記録を確認してください。")
+        with self.demographics_path.open(newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        if (len(rows) != 1 or rows[0].get("participant_id") != self.participant_id
+                or rows[0].get("gender") not in ("男性", "女性", "その他")):
+            raise ValueError("初日の参加者情報を確認してください。")
+        self.participant_age = int(rows[0].get("age") or 0)
+        if not 1 <= self.participant_age <= 120:
+            raise ValueError("初日の年齢の記録を確認してください。")
+        self.participant_gender = rows[0]["gender"]
+
+    def initialize_session_files(self):
+        # mkdirで同じ参加者・同じ日の同時開始を防ぎ、既存の記録を保護する。
+        self.session_dir.mkdir(parents=True, exist_ok=False)
+        if self.session_day == 1:
+            with self.plan_path.open("x", encoding="utf-8") as f:
+                json.dump(self.plan, f, ensure_ascii=False, indent=2)
+            with self.demographics_path.open("x", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(["participant_id", "age", "gender"])
+                writer.writerow([self.participant_id, self.participant_age, self.participant_gender])
+
         self.create_result_file()
-
         self.create_event_log()
         self.main_result_path = self.result_path
         self.main_event_log_path = self.event_log_path
-        self.practice_result_path = os.path.join(self.participant_dir, f"{self.participant_id}_practice.csv")
-        self.practice_event_log_path = os.path.join(self.participant_dir, f"{self.participant_id}_practice_events.csv")
-        # 本実験と同じ列構成。既存ファイルへの追記混入を避ける。
+        self.practice_result_path = self.session_dir / f"{self.session_prefix}_practice.csv"
+        self.practice_event_log_path = self.session_dir / f"{self.session_prefix}_practice_events.csv"
         for source, dest in ((self.main_result_path, self.practice_result_path),
                              (self.main_event_log_path, self.practice_event_log_path)):
-            if os.path.exists(dest) and os.path.getsize(dest) > 0:
-                messagebox.showerror("保存先の重複", f"練習ログが既に存在します。別の被験者IDを使用するか、バックアップ後に整理してください。\n{dest}")
-                self.root.destroy()
-                return
-            with open(source, "r", newline="", encoding="utf-8-sig") as src:
+            with open(source, newline="", encoding="utf-8-sig") as src:
                 header = next(csv.reader(src))
-            with open(dest, "w", newline="", encoding="utf-8-sig") as dst:
+            with dest.open("x", newline="", encoding="utf-8-sig") as dst:
                 csv.writer(dst).writerow(header)
-        self.is_practice = True
-        self.stimuli = list(self.practice_stimuli)
         self.result_path = self.practice_result_path
         self.event_log_path = self.practice_event_log_path
-        self.current_trial = 0
-
-        self.frame = None
-
-        self.show_demographics_screen()
 
     def show_demographics_screen(self):
         """練習開始前に参加者属性を1回だけ取得する（視線計測なし）。"""
@@ -203,20 +333,6 @@ class Experiment:
             messagebox.showwarning("入力の確認", "性別を選択してください。", parent=self.root)
             return
 
-        # 参加者属性を別CSVにも保存し、各試行の回答CSVにも記録する。
-        path = os.path.join(self.participant_dir, f"{self.participant_id}_demographics.csv")
-        if os.path.exists(path):
-            messagebox.showerror("保存先の重複", "参加者情報が既に保存されています。\n"
-                                 "被験者IDを確認してください。\n" + path, parent=self.root)
-            return
-        try:
-            with open(path, "x", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(["participant_id", "age", "gender"])
-                writer.writerow([self.participant_id, age, gender])
-        except OSError as exc:
-            messagebox.showerror("保存エラー", str(exc), parent=self.root)
-            return
         self.participant_age = age
         self.participant_gender = gender
         self.show_practice_start_screen()
@@ -241,11 +357,7 @@ class Experiment:
 
             return False
 
-        self.csv_path = csv_path
-
-        required = {"id", "condition", "score", "length", "text", "question",
-
-                    "choice_A", "choice_B", "choice_C", "choice_D", "correct_answer"}
+        required = set(STIMULUS_COLUMNS)
 
         try:
 
@@ -293,17 +405,8 @@ class Experiment:
 
                     raise ValueError(f"CSV {line}行目: correct_answerはA/B/C/Dにしてください。")
 
-            participant = self.participant_id.strip().upper()
-
-            if not (participant.startswith("P") and participant[1:].isdigit()
-
-                    and int(participant[1:]) > 0):
-
-                raise ValueError("被験者IDはP001のような形式にしてください。")
-
-            self.participant_id = participant
-
-            self.participant_number = int(participant[1:])
+            if len(rows) < 2:
+                raise ValueError("2日間の実験には本実験用の問題が2問以上必要です。")
 
             self.stimuli = rows
 
@@ -315,27 +418,14 @@ class Experiment:
 
         self.num_questions = simpledialog.askinteger(
 
-            "出題数の設定",
+            "2日間の合計出題数",
 
-            f"CSVには{len(rows)}問あります。出題する問題数を入力してください。\n"
-
-            "難易度ごとにできるだけ均等に選びます。\n"
-
-            "3の倍数なら各難易度の問題数が同じになります。",
-
+            f"CSVには{len(rows)}問あります。2日間の合計出題数を入力してください。\n"
+            "例 240問なら各日120問です。難易度の内訳はできるだけそろえます。",
             parent=self.root, initialvalue=min(MAIN_DEFAULT_QUESTIONS, len(rows)),
-
-            minvalue=1, maxvalue=len(rows)
-
+            minvalue=2, maxvalue=len(rows)
         )
-
-        if self.num_questions is None:
-
-            return False
-
-        self.apply_counterbalance()
-
-        return True
+        return self.num_questions is not None
 
     def load_practice_stimuli(self):
         """本実験と独立したCSVから難易度別に1問ずつ選ぶ。"""
@@ -344,15 +434,14 @@ class Experiment:
             filetypes=[("CSVファイル", "*.csv")])
         if not path:
             return False
-        required = {"id", "condition", "score", "length", "text", "question",
-                    "choice_A", "choice_B", "choice_C", "choice_D", "correct_answer"}
+        required = set(STIMULUS_COLUMNS)
         try:
             with open(path, newline="", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
                 if not required.issubset(reader.fieldnames or []):
                     raise ValueError("練習CSVの必須列が不足しています: " + ", ".join(sorted(required - set(reader.fieldnames or []))))
                 rows = list(reader)
-            groups = {k: [] for k in ("easy", "medium", "hard")}
+            groups = {condition: [] for condition in CONDITIONS}
             main_ids = {r["id"] for r in self.stimuli}
             main_texts = {r["text"].strip() for r in self.stimuli}
             for row in rows:
@@ -377,278 +466,186 @@ class Experiment:
             return False
 
     def apply_counterbalance(self):
-
-        # 共通シード: 同じCSVと出題数なら、全被験者で同じ問題を選ぶ。
-
-        # 選ぶ問題セットを変える場合はこの値を変更する。
-
-        selection_seed = 2026
-
-        rng = random.Random(selection_seed)
-
-        groups = {condition: [] for condition in ("easy", "medium", "hard")}
-
+        # 共通シードで抽出・分割する。参加者IDは提示順だけに使う。
+        rng = random.Random(2026)
+        groups = {condition: [] for condition in CONDITIONS}
         for row in self.stimuli:
-
-            groups[row["condition"]].append(row)
-
-        def sort_key(row):
-
-            sid = row["id"]
-
-            return (0, int(sid)) if sid.isdigit() else (1, sid)
+            groups[row["condition"]].append({key: row[key] for key in STIMULUS_COLUMNS})
 
         for group in groups.values():
-
-            group.sort(key=sort_key)
-
+            group.sort(key=lambda row: (0, int(row["id"]), row["id"])
+                       if row["id"].isascii() and row["id"].isdecimal()
+                       else (1, row["id"]))
             rng.shuffle(group)
 
-        # 一巡につき各難易度1問。足りない難易度は他の難易度で補う。
-
-        selected = {condition: [] for condition in groups}
-
-        counts = {condition: 0 for condition in groups}
-
+        selected = {condition: [] for condition in CONDITIONS}
         remaining = self.num_questions
-
         while remaining:
-
-            for condition in groups:
-
-                if remaining and counts[condition] < len(groups[condition]):
-
-                    selected[condition].append(groups[condition][counts[condition]])
-
-                    counts[condition] += 1
-
+            for condition, group in groups.items():
+                index = len(selected[condition])
+                if remaining and index < len(group):
+                    selected[condition].append(group[index])
                     remaining -= 1
 
-        # 6問・各難易度2問の場合、従来の6種類の提示順に対応。
+        sets = {name: {condition: [] for condition in CONDITIONS} for name in ("A", "B")}
+        start_side = 0
+        for condition, group in selected.items():
+            # 近い文字数の文章を別々のセットへ入れ、余った1問は難易度間で交互に配る。
+            group.sort(key=lambda row: len("".join(row["text"].splitlines())))
+            for index, row in enumerate(group):
+                name = ("A", "B")[(index + start_side) % 2]
+                sets[name][condition].append(row)
+            start_side = (start_side + len(group)) % 2
 
         patterns = [
-
             ("easy", "medium", "hard"), ("medium", "hard", "easy"),
-
             ("hard", "easy", "medium"), ("easy", "hard", "medium"),
-
-            ("hard", "medium", "easy"), ("medium", "easy", "hard")
-
+            ("hard", "medium", "easy"), ("medium", "easy", "hard"),
         ]
+        pattern_index = ((self.participant_number - 1) // 2) % len(patterns)
+        for buckets in sets.values():
+            for group in buckets.values():
+                rng.shuffle(group)
+                if pattern_index >= 3:
+                    group.reverse()
 
-        pattern_index = (self.participant_number - 1) % len(patterns)
+        set_order = ("A", "B") if self.participant_number % 2 else ("B", "A")
+        days = []
+        for name in set_order:
+            buckets = sets[name]
+            order = [
+                buckets[condition][index]
+                for index in range(max(map(len, buckets.values())))
+                for condition in patterns[pattern_index]
+                if index < len(buckets[condition])
+            ]
+            days.append({"set": name, "stimuli": order})
 
-        if pattern_index >= 3:
-
-            for group in selected.values():
-
-                group.reverse()
-
-        self.stimuli = []
-
-        for index in range(max(counts.values())):
-
-            for condition in patterns[pattern_index]:
-
-                if index < len(selected[condition]):
-
-                    self.stimuli.append(selected[condition][index])
-
-        print("========== 提示順 ==========")
-
-        print(f"被験者ID: {self.participant_id} / 出題数: {len(self.stimuli)}")
-
-        print(f"抽出シード: {selection_seed} / 提示パターン: {pattern_index + 1}")
-
-        print(f"Easy: {counts['easy']} / Medium: {counts['medium']} / Hard: {counts['hard']}")
-
-        for number, row in enumerate(self.stimuli, start=1):
-
-            print(f"{number}: ID={row['id']} / {row['condition']}")
-
-        print("============================")
-
+        counts = {condition: len(group) for condition, group in selected.items()}
         if max(counts.values()) - min(counts.values()) > 1:
-
+            summary = " / ".join(f"{key}: {count}問" for key, count in counts.items())
             messagebox.showwarning(
-
-                "難易度の問題数", "CSV内の問題数が不足する難易度を、他の難易度で補いました。\n"
-
-                f"Easy: {counts['easy']}問 / Medium: {counts['medium']}問 / Hard: {counts['hard']}問",
-
+                "難易度の問題数",
+                f"不足する難易度は他の難易度で補いました。\n2日間の合計 {summary}",
                 parent=self.root
-
             )
+        for day, plan in enumerate(days, start=1):
+            buckets = sets[plan["set"]]
+            summary = " / ".join(f"{key}: {len(group)}問" for key, group in buckets.items())
+            print(f"{self.participant_id} {day}日目 / セット{plan['set']} / {summary}")
+        return days
 
     def create_result_file(self):
 
-        # 被験者IDごとに保存先フォルダを分ける
+        self.result_path = self.session_dir / f"{self.session_prefix}.csv"
+        with self.result_path.open("x", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
 
-        # 例: results/P001/P001.csv
+            writer.writerow([
 
-        self.participant_dir = os.path.join("results", self.participant_id)
+                "participant_id",
 
-        os.makedirs(self.participant_dir, exist_ok=True)
+                "age",
 
-        self.result_path = os.path.join(
+                "gender",
 
-            self.participant_dir,
+                "trial_id",
 
-            f"{self.participant_id}.csv"
+                "condition",
 
-        )
+                "score",
 
-        if not os.path.exists(self.result_path):
+                "length",
 
-            with open(self.result_path, "w", newline="", encoding="utf-8-sig") as f:
+                "experiment_start_time",
 
-                writer = csv.writer(f)
+                # absolute unix time
 
-                writer.writerow([
+                "text_start_time",
 
-                    "participant_id",
+                "text_end_time",
 
-                    "age",
+                "preconfidence_start_time",
 
-                    "gender",
+                "preconfidence_end_time",
 
-                    "trial_id",
+                "question_start_time",
 
-                    "condition",
+                "question_end_time",
 
-                    "score",
+                "questionnaire_start_time",
 
-                    "length",
+                "questionnaire_end_time",
 
-                    "experiment_start_time",
+                # offset from experiment_start_time
 
-                    # absolute unix time
+                "text_start_offset",
 
-                    "text_start_time",
+                "text_end_offset",
 
-                    "text_end_time",
+                "preconfidence_start_offset",
 
-                    "preconfidence_start_time",
+                "preconfidence_end_offset",
 
-                    "preconfidence_end_time",
+                "question_start_offset",
 
-                    "question_start_time",
+                "question_end_offset",
 
-                    "question_end_time",
+                "questionnaire_start_offset",
 
-                    "questionnaire_start_time",
+                "questionnaire_end_offset",
 
-                    "questionnaire_end_time",
+                # duration
 
-                    # offset from experiment_start_time
+                "reading_time_sec",
 
-                    "text_start_offset",
+                "preconfidence_time_sec",
 
-                    "text_end_offset",
+                "answer_time_sec",
 
-                    "preconfidence_start_offset",
+                "questionnaire_time_sec",
 
-                    "preconfidence_end_offset",
+                # task result
 
-                    "question_start_offset",
+                "correct_answer",
 
-                    "question_end_offset",
+                "participant_answer",
 
-                    "questionnaire_start_offset",
+                "correct",
 
-                    "questionnaire_end_offset",
+                "pre_question_confidence",
 
-                    # duration
+                "understanding",
 
-                    "reading_time_sec",
+                "confidence",
 
-                    "preconfidence_time_sec",
+                "screen_width",
 
-                    "answer_time_sec",
+                "screen_height",
+                "session_day",
+                "stimulus_set",
+                "presentation_order",
+                "recording_segment"
 
-                    "questionnaire_time_sec",
+            ])
 
-                    # task result
-
-                    "correct_answer",
-
-                    "participant_answer",
-
-                    "correct",
-
-                    "pre_question_confidence",
-
-                    "understanding",
-
-                    "confidence",
-
-                    "screen_width",
-
-                    "screen_height"
-
-                ])
-
-        plan_path = os.path.join(self.participant_dir, f"{self.participant_id}_selected_stimuli.csv")
-
-        with open(plan_path, "w", newline="", encoding="utf-8-sig") as f:
-
-            writer = csv.DictWriter(f, fieldnames=["presentation_order"] + list(self.stimuli[0]))
-
+        plan_path = self.session_dir / f"{self.session_prefix}_selected_stimuli.csv"
+        with plan_path.open("x", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=["presentation_order", *STIMULUS_COLUMNS])
             writer.writeheader()
-
-            for number, row in enumerate(self.stimuli, start=1):
-
+            for number, row in enumerate(self.main_stimuli, start=1):
                 writer.writerow({"presentation_order": number, **row})
 
     def create_event_log(self):
-
-        # 被験者IDごとにイベントログも同じフォルダへ保存する
-
-        # 例: results/P001/P001_events.csv
-
-        self.event_log_path = os.path.join(
-
-            self.participant_dir,
-
-            f"{self.participant_id}_events.csv"
-
-        )
-
-        if not os.path.exists(self.event_log_path):
-
-            with open(self.event_log_path, "w", newline="", encoding="utf-8-sig") as f:
-
-                writer = csv.writer(f)
-
-                writer.writerow([
-
-                    "timestamp",
-
-                    "offset_sec",
-
-                    "event",
-
-                    "trial_id",
-
-                    "phase",
-
-                    "event_type"
-
-                ])
+        self.event_log_path = self.session_dir / f"{self.session_prefix}_events.csv"
+        with self.event_log_path.open("x", newline="", encoding="utf-8-sig") as f:
+            csv.writer(f).writerow(["timestamp", "offset_sec", "event", "trial_id", "phase", "event_type", "qpc_us"])
 
     def log_event(self, event_name, trial_id=None, phase=None, event_type=None):
 
-        if self.experiment_start_time is None:
-
-            now = time.time()
-
-            offset = 0.0
-
-        else:
-
-            now = time.time()
-
-            offset = now - self.experiment_start_time
+        qpc_us = self.read_qpc_us()
+        now = time.time()
+        offset = 0.0 if self.experiment_start_time is None else now - self.experiment_start_time
 
         with open(self.event_log_path, "a", newline="", encoding="utf-8-sig") as f:
 
@@ -666,7 +663,8 @@ class Experiment:
 
                 phase,
 
-                event_type
+                event_type,
+                qpc_us
 
             ])
 
@@ -871,7 +869,8 @@ class Experiment:
         self.clear_frame()
         tk.Label(
             self.frame,
-            text="これから練習問題を3問行います。\nこの段階ではTobiiの録画は不要です。",
+            text=(f"{self.session_day}日目の実験（本試行 {len(self.main_stimuli)}問）\n\n"
+                  "これから練習問題を3問行います。\nこの段階ではTobiiの録画は不要です。"),
             font=("Meiryo", 18), justify="center"
         ).pack(expand=True)
         tk.Button(
@@ -881,6 +880,13 @@ class Experiment:
 
     def start_practice(self):
         """練習用の基準時刻を記録するが、SYNCイベントは発行しない。"""
+        try:
+            self.initialize_session_files()
+        except (OSError, ValueError, csv.Error) as exc:
+            messagebox.showerror("保存エラー", f"{exc}\n保存先を確認してください。",
+                                 parent=self.root)
+            self.root.destroy()
+            return
         self.experiment_start_time = time.time()
         self.log_event("PRACTICE_START", trial_id="", phase="practice", event_type="start")
         self.show_text()
@@ -998,8 +1004,6 @@ class Experiment:
         # 元の改行を除去し、表示欄の右端だけで折り返す。
 
         # 英単語の途中にある改行は、単語の連結を避けるため空白にする。
-
-        import re
 
         display_text = re.sub(r"(?<=[A-Za-z0-9])\r?\n(?=[A-Za-z0-9])", " ", trial["text"])
 
@@ -1653,7 +1657,11 @@ class Experiment:
 
                 self.screen_width,
 
-                self.screen_height
+                self.screen_height,
+                self.session_day,
+                "" if self.is_practice else self.session_set,
+                trial_no,
+                "" if self.is_practice else self.recording_segment
 
             ])
 
@@ -1683,7 +1691,10 @@ class Experiment:
 
                 self.frame,
 
-                text="実験終了です。\nご協力ありがとうございました。",
+                text=(f"{self.session_day}日目の実験が終了しました。\n"
+                      "実験者はTobii Pro Labの録画を終了・保存してください。\n\n"
+                      + ("次回は同じ参加者IDで2日目を選択してください。"
+                         if self.session_day == 1 else "ご協力ありがとうございました。")),
 
                 font=("Meiryo", 18)
 
