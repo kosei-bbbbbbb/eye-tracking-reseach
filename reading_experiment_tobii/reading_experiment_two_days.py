@@ -15,7 +15,7 @@ except ImportError:
     winsound = None
 # 本文表示設定。負のフォントサイズを使い、Windowsのpt指定と区別する。
 
-READING_TIME_LIMIT_SEC = 30
+READING_TIME_LIMIT_SEC = 35
 MAIN_DEFAULT_QUESTIONS = 240
 BREAK_INTERVAL_SEC = 60 * 60  # 休憩を除いた本実験の経過時間
 SHORT_BREAK_INTERVAL_SEC = 20 * 60  # 本実験の実働20分ごと

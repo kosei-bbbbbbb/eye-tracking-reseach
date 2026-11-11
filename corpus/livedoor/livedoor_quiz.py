@@ -36,7 +36,7 @@ BASE_DIR = os.path.dirname(
 
 INPUT_CSV = os.path.join(
     BASE_DIR,
-    "selected_articles_original_only.csv"
+    "selected_articles_original_only (2).csv"
 )
 
 OUTPUT_CSV = os.path.join(
@@ -55,7 +55,7 @@ MODEL_NAME = "gemini-2.5-flash"
 # hard → medium → easyが2周分生成される
 #
 # 全件生成する場合は None にする
-MAX_ARTICLES = 48
+MAX_ARTICLES = 60
 
 # 1記事あたりの再試行回数
 MAX_RETRIES = 3
