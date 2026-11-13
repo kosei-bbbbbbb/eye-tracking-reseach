@@ -16,7 +16,7 @@ except ImportError:
 # 本文表示設定。負のフォントサイズを使い、Windowsのpt指定と区別する。
 
 READING_TIME_LIMIT_SEC = 35
-MAIN_DEFAULT_QUESTIONS = 240
+MAIN_DEFAULT_QUESTIONS = 120
 BREAK_INTERVAL_SEC = 60 * 60  # 休憩を除いた本実験の経過時間
 SHORT_BREAK_INTERVAL_SEC = 20 * 60  # 本実験の実働20分ごと
 SHORT_BREAK_DURATION_SEC = 60  # 録画を継続する短い休憩
@@ -196,15 +196,26 @@ class Experiment:
         if self.session_day == 1:
             if not self.load_stimuli() or not self.load_practice_stimuli():
                 return False
-            days = self.apply_counterbalance()
             self.plan = {
                 "participant_id": self.participant_id,
-                "days": days,
+                "days": [{"set": "day1", "stimuli": self.order_stimuli(self.stimuli)},
+                         {"set": "day2", "stimuli": []}],
                 "practice": self.practice_stimuli,
             }
         else:
             self.plan = self.load_session_plan()
             self.load_day_one_results()
+            if not self.load_stimuli():
+                return False
+            day1_rows = self.plan["days"][0]["stimuli"]
+            day1_ids = {r["id"] for r in day1_rows}
+            day1_texts = {r["text"].strip() for r in day1_rows}
+            practice_ids = {r["id"] for r in self.plan["practice"]}
+            practice_texts = {r["text"].strip() for r in self.plan["practice"]}
+            if any(r["id"] in day1_ids | practice_ids or
+                   r["text"].strip() in day1_texts | practice_texts for r in self.stimuli):
+                raise ValueError("2日目CSVに1日目または練習用と重複する問題ID・本文があります。")
+            self.plan["days"][1]["stimuli"] = self.order_stimuli(self.stimuli)
 
         today = self.plan["days"][self.session_day - 1]
         self.session_set = today["set"]
@@ -226,11 +237,12 @@ class Experiment:
         try:
             if (plan["participant_id"] != self.participant_id
                     or len(plan["days"]) != 2
-                    or {day["set"] for day in plan["days"]} != {"A", "B"}
-                    or any(not day["stimuli"] for day in plan["days"])
+                    or [d["set"] for d in plan["days"]] != ["day1", "day2"]
+                    or len(plan["days"][0]["stimuli"]) != MAIN_DEFAULT_QUESTIONS
+                    or plan["days"][1]["stimuli"]
                     or len(plan["practice"]) != 3):
                 raise ValueError("保存した出題計画の内容が一致しません。")
-            rows = plan["days"][0]["stimuli"] + plan["days"][1]["stimuli"] + plan["practice"]
+            rows = plan["days"][0]["stimuli"] + plan["practice"]
             if (any(not all(isinstance(row[key], str) and row[key].strip()
                             for key in STIMULUS_COLUMNS) for row in rows)
                     or len({row["id"] for row in rows}) != len(rows)):
@@ -276,6 +288,9 @@ class Experiment:
                 writer = csv.writer(f)
                 writer.writerow(["participant_id", "age", "gender"])
                 writer.writerow([self.participant_id, self.participant_age, self.participant_gender])
+        else:
+            with (self.session_dir / f"{self.session_prefix}_session_plan.json").open("x", encoding="utf-8") as f:
+                json.dump(self.plan, f, ensure_ascii=False, indent=2)
 
         self.create_result_file()
         self.create_event_log()
@@ -347,7 +362,7 @@ class Experiment:
 
         csv_path = filedialog.askopenfilename(
 
-            parent=self.root, title="刺激CSVを選択してください",
+            parent=self.root, title=f"{self.session_day}日目用の120問CSVを選択してください",
 
             filetypes=[("CSVファイル", "*.csv"), ("すべてのファイル", "*.*")]
 
@@ -405,27 +420,13 @@ class Experiment:
 
                     raise ValueError(f"CSV {line}行目: correct_answerはA/B/C/Dにしてください。")
 
-            if len(rows) < 2:
-                raise ValueError("2日間の実験には本実験用の問題が2問以上必要です。")
-
+            if len(rows) != MAIN_DEFAULT_QUESTIONS:
+                raise ValueError(f"{self.session_day}日目のCSVは120問ちょうど必要です（現在{len(rows)}問）。")
             self.stimuli = rows
-
+            return True
         except (OSError, UnicodeError, csv.Error, ValueError) as exc:
-
             messagebox.showerror("読み込みエラー", str(exc), parent=self.root)
-
             return False
-
-        self.num_questions = simpledialog.askinteger(
-
-            "2日間の合計出題数",
-
-            f"CSVには{len(rows)}問あります。2日間の合計出題数を入力してください。\n"
-            "例 240問なら各日120問です。難易度の内訳はできるだけそろえます。",
-            parent=self.root, initialvalue=min(MAIN_DEFAULT_QUESTIONS, len(rows)),
-            minvalue=2, maxvalue=len(rows)
-        )
-        return self.num_questions is not None
 
     def load_practice_stimuli(self):
         """本実験と独立したCSVから難易度別に1問ずつ選ぶ。"""
@@ -465,75 +466,25 @@ class Experiment:
             messagebox.showerror("練習CSV読み込みエラー", str(exc), parent=self.root)
             return False
 
-    def apply_counterbalance(self):
-        # 共通シードで抽出・分割する。参加者IDは提示順だけに使う。
-        rng = random.Random(2026)
+    def order_stimuli(self, rows):
+        """CSVに含まれる120問だけを使用。難易度を交互に提示する。"""
+        rng = random.Random(2026 + self.participant_number * 2 + self.session_day)
         groups = {condition: [] for condition in CONDITIONS}
-        for row in self.stimuli:
+        for row in rows:
             groups[row["condition"]].append({key: row[key] for key in STIMULUS_COLUMNS})
-
         for group in groups.values():
-            group.sort(key=lambda row: (0, int(row["id"]), row["id"])
-                       if row["id"].isascii() and row["id"].isdecimal()
-                       else (1, row["id"]))
             rng.shuffle(group)
-
-        selected = {condition: [] for condition in CONDITIONS}
-        remaining = self.num_questions
-        while remaining:
-            for condition, group in groups.items():
-                index = len(selected[condition])
-                if remaining and index < len(group):
-                    selected[condition].append(group[index])
-                    remaining -= 1
-
-        sets = {name: {condition: [] for condition in CONDITIONS} for name in ("A", "B")}
-        start_side = 0
-        for condition, group in selected.items():
-            # 近い文字数の文章を別々のセットへ入れ、余った1問は難易度間で交互に配る。
-            group.sort(key=lambda row: len("".join(row["text"].splitlines())))
-            for index, row in enumerate(group):
-                name = ("A", "B")[(index + start_side) % 2]
-                sets[name][condition].append(row)
-            start_side = (start_side + len(group)) % 2
-
         patterns = [
             ("easy", "medium", "hard"), ("medium", "hard", "easy"),
             ("hard", "easy", "medium"), ("easy", "hard", "medium"),
             ("hard", "medium", "easy"), ("medium", "easy", "hard"),
         ]
-        pattern_index = ((self.participant_number - 1) // 2) % len(patterns)
-        for buckets in sets.values():
-            for group in buckets.values():
-                rng.shuffle(group)
-                if pattern_index >= 3:
-                    group.reverse()
-
-        set_order = ("A", "B") if self.participant_number % 2 else ("B", "A")
-        days = []
-        for name in set_order:
-            buckets = sets[name]
-            order = [
-                buckets[condition][index]
-                for index in range(max(map(len, buckets.values())))
-                for condition in patterns[pattern_index]
-                if index < len(buckets[condition])
-            ]
-            days.append({"set": name, "stimuli": order})
-
-        counts = {condition: len(group) for condition, group in selected.items()}
-        if max(counts.values()) - min(counts.values()) > 1:
-            summary = " / ".join(f"{key}: {count}問" for key, count in counts.items())
-            messagebox.showwarning(
-                "難易度の問題数",
-                f"不足する難易度は他の難易度で補いました。\n2日間の合計 {summary}",
-                parent=self.root
-            )
-        for day, plan in enumerate(days, start=1):
-            buckets = sets[plan["set"]]
-            summary = " / ".join(f"{key}: {len(group)}問" for key, group in buckets.items())
-            print(f"{self.participant_id} {day}日目 / セット{plan['set']} / {summary}")
-        return days
+        pattern = patterns[(self.participant_number - 1 + self.session_day - 1) % len(patterns)]
+        ordered = [groups[c][i] for i in range(max(map(len, groups.values())))
+                   for c in pattern if i < len(groups[c])]
+        print(f"{self.participant_id} {self.session_day}日目: " +
+              " / ".join(f"{c} {len(groups[c])}問" for c in CONDITIONS))
+        return ordered
 
     def create_result_file(self):
 
