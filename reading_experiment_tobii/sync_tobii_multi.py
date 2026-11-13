@@ -1,4 +1,4 @@
-"""日別イベントログとTobii Pro Labの画面型録画を同期する。"""
+﻿"""日別イベントログとTobii Pro Labの画面型録画を同期する。"""
 import argparse
 import csv
 import math
@@ -82,18 +82,24 @@ def tobii_rows(path):
 
 
 def load_session(path):
-    behavior = csv_rows(path / f"{path.parent.parent.name}_{path.name}.csv")
+    behavior_files = sorted(
+    f for f in path.glob("P*_day[0-9]*.csv")
+    if re.fullmatch(r"P\d+_day\d+\.csv", f.name)
+)
+    if len(behavior_files) != 1:
+        raise ValueError("指定フォルダには P001_day1.csv などの行動ログを1つ置いてください。")
+    behavior = csv_rows(behavior_files[0])
     if not behavior:
         raise ValueError("本実験の行動ログが空です。")
     participant, day = identity(behavior[0], KEY[:2])
-    if path.name != f"day{day}" or path.parent.parent.name != participant:
-        raise ValueError("参加者IDと日番号がフォルダ名に一致しません。")
+    if behavior_files[0].name != f"{participant}_day{day}.csv":
+        raise ValueError("行動ログのファイル名と参加者ID・日番号が一致しません。")
     trials = {row["trial_id"]: row for row in behavior}
     if len(trials) != len(behavior) or any(identity(row, KEY[:2]) != (participant, day) for row in behavior):
         raise ValueError("行動ログに複数の参加者・実施日または重複試行があります。")
-    events = csv_rows(path / f"{participant}_{path.name}_events.csv")
-    if not events or events[-1].get("event") != "EXPERIMENT_END":
-        raise ValueError("本実験の完了イベントが見つかりません。")
+    events = csv_rows(path / f"{participant}_day{day}_events.csv")
+    if not events:
+        raise ValueError("イベントログが空です。")
     segments, windows, phase_keys = {}, [], set()
     active, pending, marker = None, None, None
     for row in events:
@@ -196,7 +202,7 @@ def recording_epoch(row):
         return None
 
 
-def sync_segment(segment, number, path, manual_us, scale, samples, phases, events, reports):
+def sync_segment(segment, number, path, manual_us, scale, samples, phases, events, reports, selected_name=None):
     method, qpc = clock_mapper(segment, manual_us)
     anchor = qpc(segment["anchor"])
     starts, ends = [], []
@@ -214,6 +220,8 @@ def sync_segment(segment, number, path, manual_us, scale, samples, phases, event
     with tobii_rows(path) as (headers, rows):
         for row in rows:
             name = str(row.get("recording name") or "").strip()
+            if selected_name is not None and name != selected_name:
+                continue
             if not name:
                 if row.get("sensor") or row.get("event"):
                     raise ValueError(f"{path.name} に録画名の空欄があります。")
@@ -221,7 +229,7 @@ def sync_segment(segment, number, path, manual_us, scale, samples, phases, event
             if recording_name is None:
                 recording_name = name
             if name != recording_name:
-                raise ValueError(f"{path.name} に複数録画があります。録画別に書き出してください。")
+                raise ValueError(f"{path.name} に複数録画があります。--combined と --exclude を使ってください。")
             rt = finite(row.get("recording timestamp"))
             ct = finite(row.get("computer timestamp"))
             if row.get("event") == "RecordingStart":
@@ -279,10 +287,43 @@ def sync_segment(segment, number, path, manual_us, scale, samples, phases, event
                       "movement_columns": int({"eye movement type", "eye movement type index"} <= set(headers))})
 
 
+def discover_recordings(path):
+    """Excel/CSV/TSV内の録画名を初出順に収集する。"""
+    found = []
+    seen = set()
+    with tobii_rows(path) as (_, rows):
+        for row in rows:
+            name = str(row.get("recording name") or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                found.append(name)
+    return found
+
+
+def choose_files(args, session, segments):
+    if args.combined is None:
+        files = choose_files(args, session, segments)
+        return {number: (path, None) for number, path in files.items()}
+    if args.recording:
+        raise ValueError("--combined と --recording は同時指定できません。")
+    path = args.combined.resolve()
+    if not path.is_file():
+        raise ValueError(f"Tobiiファイルがありません: {path}")
+    names = [n for n in discover_recordings(path) if n not in args.exclude]
+    if len(names) != len(segments):
+        raise ValueError(
+            f"有効な録画数 {len(names)} と実験側の録画区間数 {len(segments)} が一致しません。"
+            f" 録画名: {names}。不要な録画は --exclude で指定してください。")
+    print("録画の対応（開始順）:")
+    for number, name in zip(sorted(segments), names):
+        print(f"  区間{number} = {name}")
+    return {number: (path, name) for number, name in zip(sorted(segments), names)}
+
+
 def run(args):
     session = args.session.resolve()
     segments = load_session(session)
-    files = locate_recordings(session, segments, assignments(args.recording, Path))
+    files = choose_files(args, session, segments)
     anchors = assignments(args.anchor, float)
     if set(anchors) - set(segments):
         raise ValueError("--anchorにイベントログにない区間番号があります。")
@@ -303,8 +344,10 @@ def run(args):
             writers = [writer(stack.enter_context((stage / name).open("w", encoding="utf-8-sig", newline="")), fields)
                        for name, fields in schemas.items()]
             for number, segment in segments.items():
-                sync_segment(segment, number, files[number], anchors.get(number),
-                             1 if args.recording_unit == "us" else 1000, *writers)
+                path, name = files[number]
+                sync_segment(segment, number, path, anchors.get(number),
+                             1 if args.recording_unit == "us" else 1000, *writers,
+                             selected_name=name)
         for name in schemas:
             (stage / name).replace(output / name)
     print(f"同期完了: {output}")
@@ -312,7 +355,9 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--session", type=Path, required=True, help="results/P001/two_day/day1 など")
+    parser.add_argument("--session", type=Path, required=True, help="日別ログの入ったフォルダ")
+    parser.add_argument("--combined", type=Path, help="複数録画を含むTobii Excel/CSV/TSV")
+    parser.add_argument("--exclude", action="append", default=[], help="除外する録画名。複数指定可")
     parser.add_argument("--recording", action="append", default=[], metavar="区間=ファイル")
     parser.add_argument("--recording-unit", choices=("us", "ms"), default="us")
     parser.add_argument("--anchor", action="append", default=[], metavar="区間=Computer_timestamp_us")

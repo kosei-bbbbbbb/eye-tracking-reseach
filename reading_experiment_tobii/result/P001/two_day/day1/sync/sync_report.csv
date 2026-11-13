@@ -1,0 +1,3 @@
+﻿recording_segment,recording_name,file,method,sync_recording_sec,seconds_after_last_trial,utc_difference_sec,matched_samples,phases_without_samples,movement_columns
+1,Recording1,Project7 Data export1-2.xlsx,qpc,257.896319,14.548164,0.13553690910339355,112287,0,1
+2,Recording3,Project7 Data export1-2.xlsx,qpc,128.964952,10.279573,0.15302515029907227,110203,0,1

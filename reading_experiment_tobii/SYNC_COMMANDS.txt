@@ -1,0 +1,90 @@
+Tobii視線データ同期コマンド レジュメ
+対象: sync_tobii_multi.py
+========================================
+
+【1. 準備】
+参加者・日付ごとに行動ログ、イベントログ、Tobii Excelを保存する。
+
+reading_experiment_tobii/
+  sync_tobii_multi.py
+  result/
+    P001/
+      two_day/
+        day1/
+          P001_day1.csv
+          P001_day1_events.csv
+          Data export.xlsx
+        day2/
+          P001_day2.csv
+          P001_day2_events.csv
+          Data export.xlsx
+    P002/
+      two_day/
+        day1/
+          P002_day1.csv
+          P002_day1_events.csv
+          Data export.xlsx
+
+【2. PowerShellでプログラムの場所へ移動】
+cd "C:\Users\shita\OneDrive\ドキュメント\研究室\github\eye-tracking-reseach\reading_experiment_tobii"
+
+【3. 基本コマンド】
+P001の1日目:
+python sync_tobii_multi.py --session "result/P001/two_day/day1" --combined "result/P001/two_day/day1/Data export.xlsx"
+
+P001の2日目:
+python sync_tobii_multi.py --session "result/P001/two_day/day2" --combined "result/P001/two_day/day2/Data export.xlsx"
+
+P002の1日目:
+python sync_tobii_multi.py --session "result/P002/two_day/day1" --combined "result/P002/two_day/day1/Data export.xlsx"
+
+P002の2日目:
+python sync_tobii_multi.py --session "result/P002/two_day/day2" --combined "result/P002/two_day/day2/Data export.xlsx"
+
+※Excelのファイル名は実際の名前に合わせて変更する。
+
+【4. 不要な録画を除外する場合】
+予備実験（Recording2を除外）:
+python sync_tobii_multi.py --session "result/P001/two_day/day1" --combined "result/P001/two_day/day1/Project7 Data export1-2.xlsx" --exclude Recording2
+
+複数除外する場合:
+--exclude Recording2 --exclude Recording4
+
+※本実験で不要な録画がなければ --exclude は付けない。
+
+【5. オプション】
+--session          行動ログ・イベントログがある日別フォルダ（必須）
+--combined         複数Recordingを含むTobiiのExcel/CSV/TSV
+--exclude          解析から除外するRecording名（必要な場合のみ）
+--recording-unit   Recording timestampの単位（us または ms、初期値 us）
+--anchor           手動で対応づけるComputer timestamp（区間=時刻µs）
+--recording        録画ごとに別ファイルを使う場合の指定（区間=ファイル）
+
+【6. 出力ファイル】
+各dayフォルダ内にsync/が作成される。
+  synced_gaze_samples.csv : 試行・フェーズごとの視線サンプル
+  phase_windows.csv       : 各フェーズの時間範囲とサンプル数
+  aligned_events.csv      : 同期したイベント時刻
+  sync_report.csv         : 録画ごとの同期結果・確認情報
+
+【7. エラー時の確認】
+can't open file:
+  cdでsync_tobii_multi.pyのあるフォルダへ移動する。
+--session required:
+  --sessionを指定して実行する。
+行動ログが見つからない:
+  P001_day1.csvなどのファイル名と保存先を確認する。
+録画数と区間数が一致しない:
+  Excelに含まれるRecording名を確認し、不要録画のみ--excludeで除外する。
+QPCがない:
+  イベントログのqpc_us列を確認する。必要に応じて--anchorを指定する。
+SYNCと録画の対応が不正:
+  録画順・時刻単位・SYNCボタンを押した順番を確認する。
+
+【8. 運用上の注意】
+・1日目と2日目は別々に同期する。
+・Tobii録画開始後に実験プログラムのSYNCボタンを押す。
+・休憩後に録画を新しく開始したら再度SYNCボタンを押す。
+・SYNCボタンだけではTobii側に同じ瞬間のマーカーが自動記録されるわけではない。
+・同期完了後はsync_report.csvとphase_windows.csvを確認する。
+・sync/フォルダが作成されたことだけでは同期成功とは判断しない。
