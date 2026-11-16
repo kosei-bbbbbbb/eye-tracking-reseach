@@ -30,16 +30,16 @@ cd "C:\Users\shita\OneDrive\ドキュメント\研究室\github\eye-tracking-res
 
 【3. 基本コマンド】
 P001の1日目:
-python sync_tobii_multi.py --session "result/P001/two_day/day1" --combined "result/P001/two_day/day1/Data export.xlsx"
+python sync_tobii_multi.py --session "results/P001/two_day/day1" --combined "result/P001/two_day/day1/Data export.xlsx"
 
 P001の2日目:
-python sync_tobii_multi.py --session "result/P001/two_day/day2" --combined "result/P001/two_day/day2/Data export.xlsx"
+python sync_tobii_multi.py --session "results/P001/two_day/day2" --combined "result/P001/two_day/day2/Data export.xlsx"
 
 P002の1日目:
-python sync_tobii_multi.py --session "result/P002/two_day/day1" --combined "result/P002/two_day/day1/Data export.xlsx"
+python sync_tobii_multi.py --session "results/P002/two_day/day1" --combined "result/P002/two_day/day1/Data export.xlsx"
 
 P002の2日目:
-python sync_tobii_multi.py --session "result/P002/two_day/day2" --combined "result/P002/two_day/day2/Data export.xlsx"
+python sync_tobii_multi.py --session "results/P002/two_day/day2" --combined "result/P002/two_day/day2/Data export.xlsx"
 
 ※Excelのファイル名は実際の名前に合わせて変更する。
 
