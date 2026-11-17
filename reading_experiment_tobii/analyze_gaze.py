@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import fmean, pvariance
 from tempfile import TemporaryDirectory
 
-from sync_tobii import KEY, PHASES, csv_rows, finite, identity, writer
+from sync_tobii_multi import KEY, PHASES, csv_rows, finite, identity, writer
 
 METRICS = (
     "eye_samples", "valid_gaze_samples", "observed_valid_gaze_ratio", "expected_samples",
