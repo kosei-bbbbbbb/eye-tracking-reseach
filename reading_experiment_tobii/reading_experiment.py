@@ -713,7 +713,6 @@ class Experiment:
             "1分間の小休憩です。\n\n"
             f"完了: {self.current_trial} / {len(self.stimuli)} 問\n\n"
             "Tobiiの録画は停止しないでください。\n"
-            "画面から目を離して休んでください。\n"
             "1分後に再開ボタンが有効になります。"),
             font=("Meiryo", 18), justify="center").pack(expand=True)
         self.short_break_remaining_label = tk.Label(self.frame, font=("Meiryo", 18))
@@ -760,9 +759,7 @@ class Experiment:
         self.log_event("BREAK_START", trial_id="", phase="break", event_type=reason)
         self.log_event(f"RECORDING_SEGMENT_{self.recording_segment:02d}_END", trial_id="", phase="recording", event_type="end")
         self.clear_frame()
-        reason_text = "実験時間が約1時間に達しました。"
         tk.Label(self.frame, text=(
-            f"{reason_text}\n\n"
             f"完了: {self.current_trial} / {len(self.stimuli)} 問\n\n"
             "実験者はTobii Pro Labの現在の録画を終了・保存してください。\n"
             "参加者は離席して休憩できます。\n\n"
