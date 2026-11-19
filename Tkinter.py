@@ -3,7 +3,7 @@ from tkinter import messagebox, filedialog
 import csv
 import os
 import time
-
+https://script.google.com/a/st.go.tuat.ac.jp/macros/s/AKfycbzY35i2ssZonsLsYPtaWJ4224TSjQhpRJhbyDVHWeEniJETPrDBNbGa4QnVNN5i0zIJ/exec?page=admin&token=e333f2e9a88a4723abb9441e09c2f98b42d4c2ea
 
 class Experiment:
 
