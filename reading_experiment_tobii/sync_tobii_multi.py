@@ -3,6 +3,7 @@ import argparse
 import csv
 import math
 import re
+import sys
 from bisect import bisect_right
 from collections import Counter
 from contextlib import contextmanager
@@ -25,6 +26,15 @@ SAMPLE_COLUMNS = {
     "fixation_x": "fixation point x", "fixation_y": "fixation point y",
 }
 SUPPORTED = (".tsv", ".csv", ".xlsx")
+
+# ===== 実行ボタン用の設定（引数なしで実行したときだけ使う） =====
+# 相対パスはこのスクリプトのあるフォルダを基準にする。
+# DEFAULT_SESSION を空のままにすると、実行時にフォルダとファイルを選ぶ画面が出る。
+DEFAULT_SESSION = ""        # 例: "results/P001/two_day/day1"
+DEFAULT_COMBINED = ""       # 例: "results/P001/two_day/day1/Project7 Data export5.xlsx"（空なら tobii_01.xlsx などを使う）
+DEFAULT_EXCLUDE = []        # 例: ["Recording1"]（練習中の録画など、同期に使わない録画名）
+DEFAULT_RECORDING_UNIT = "us"
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def finite(value):
@@ -82,12 +92,16 @@ def tobii_rows(path):
 
 
 def load_session(path):
+    if not path.is_dir():
+        raise ValueError(f"日別フォルダが見つかりません: {path}")
     behavior_files = sorted(
-    f for f in path.glob("P*_day[0-9]*.csv")
-    if re.fullmatch(r"P\d+_day\d+\.csv", f.name)
-)
+        f for f in path.glob("P*_day[0-9]*.csv")
+        if re.fullmatch(r"P\d+_day\d+\.csv", f.name)
+    )
     if len(behavior_files) != 1:
-        raise ValueError("指定フォルダには P001_day1.csv などの行動ログを1つ置いてください。")
+        raise ValueError(
+            f"{path} には P001_day1.csv などの行動ログを1つ置いてください"
+            f"（見つかった数: {len(behavior_files)}）。")
     behavior = csv_rows(behavior_files[0])
     if not behavior:
         raise ValueError("本実験の行動ログが空です。")
@@ -146,6 +160,12 @@ def load_session(path):
         if segment_match and segment_match[2] == "END":
             segment["end"] = row
             active = None
+    if active is not None and pending is None and marker is None:
+        # 途中で実験を中断した記録（予備実験など）は、最後のイベントで区間を閉じる。
+        segments[active]["end"] = events[-1]
+        print(f"注意: 区間{active}に終了イベントがありません。"
+              f"最後のイベント {events[-1]['event']} までを同期します（中断した記録として扱います）。")
+        active = None
     if (active is not None or pending is not None or marker is not None
             or phase_keys != {(trial, phase) for trial in trials for phase in PHASES}):
         raise ValueError("録画区間または4画面のイベントが不足しています。")
@@ -300,16 +320,55 @@ def discover_recordings(path):
     return found
 
 
+def xlsx_to_tsv(path, output_dir):
+    """XLSXは読み込みが遅いので、最初に1回だけTSVへ変換して以後はそれを使う。"""
+    output_dir.mkdir(exist_ok=True)
+    target = output_dir / f"{path.stem}.tsv"
+    if target.is_file() and target.stat().st_mtime >= path.stat().st_mtime:
+        print(f"変換済みのTSVを使います: {target}")
+        return target
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise ValueError("XLSXを使う場合は py -m pip install openpyxl を実行してください。") from exc
+    import os
+    import shutil
+    import tempfile
+    print(f"{path.name} をTSVに変換しています（初回だけ時間がかかります）...")
+    # 途中で止めても壊れたTSVが残らないよう、OSの一時フォルダに書いてから移動する。
+    handle, temp_name = tempfile.mkstemp(suffix=".tsv")
+    os.close(handle)
+    temp = Path(temp_name)
+    book = load_workbook(path, read_only=True, data_only=True)
+    try:
+        with temp.open("w", encoding="utf-8", newline="") as stream:
+            output = csv.writer(stream, delimiter="\t")
+            for count, row in enumerate(book.worksheets[0].values, start=1):
+                output.writerow(["" if value is None else value for value in row])
+                if count % 100_000 == 0:
+                    print(f"  {count:,} 行を変換")
+        output_dir.mkdir(exist_ok=True)
+        shutil.move(str(temp), str(target))
+    finally:
+        book.close()
+        temp.unlink(missing_ok=True)
+    print(f"変換完了: {target}")
+    return target
+
+
 def choose_files(args, session, segments):
     if args.combined is None:
-        files = choose_files(args, session, segments)
+        files = locate_recordings(session, segments, assignments(args.recording, Path))
         return {number: (path, None) for number, path in files.items()}
     if args.recording:
         raise ValueError("--combined と --recording は同時指定できません。")
     path = args.combined.resolve()
     if not path.is_file():
         raise ValueError(f"Tobiiファイルがありません: {path}")
-    names = [n for n in discover_recordings(path) if n not in args.exclude]
+    if path.suffix.lower() == ".xlsx":
+        path = xlsx_to_tsv(path, session / "sync")
+    print("録画名を確認しています...")
+    names =[n for n in discover_recordings(path) if n not in args.exclude]
     if len(names) != len(segments):
         raise ValueError(
             f"有効な録画数 {len(names)} と実験側の録画区間数 {len(segments)} が一致しません。"
@@ -345,12 +404,59 @@ def run(args):
                        for name, fields in schemas.items()]
             for number, segment in segments.items():
                 path, name = files[number]
+                print(f"区間{number}{f'（{name}）' if name else ''}を同期しています...")
                 sync_segment(segment, number, path, anchors.get(number),
                              1 if args.recording_unit == "us" else 1000, *writers,
                              selected_name=name)
         for name in schemas:
             (stage / name).replace(output / name)
     print(f"同期完了: {output}")
+
+
+def from_script_dir(text):
+    path = Path(text).expanduser()
+    return path if path.is_absolute() else SCRIPT_DIR / path
+
+
+def ask_paths():
+    """実行ボタンで起動したとき、日別フォルダとTobiiファイルを画面で選ぶ。"""
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    results = SCRIPT_DIR / "results"
+    session = filedialog.askdirectory(
+        parent=root, title="同期する日別フォルダを選択（例 results/P001/two_day/day1）",
+        initialdir=results if results.is_dir() else SCRIPT_DIR)
+    if not session:
+        root.destroy()
+        return None
+    combined = filedialog.askopenfilename(
+        parent=root, initialdir=session,
+        title="Tobiiの書き出しファイルを選択（区間ごとの tobii_01.xlsx などを使うときはキャンセル）",
+        filetypes=[("Tobii書き出し", "*.xlsx *.tsv *.csv"), ("すべてのファイル", "*.*")])
+    root.destroy()
+    return session, combined
+
+
+def button_argv():
+    """引数なしで実行したときの引数を、設定欄または選択画面から作る。"""
+    if DEFAULT_SESSION:
+        session = str(from_script_dir(DEFAULT_SESSION))
+        combined = str(from_script_dir(DEFAULT_COMBINED)) if DEFAULT_COMBINED else ""
+    else:
+        chosen = ask_paths()
+        if chosen is None:
+            return None
+        session, combined = chosen
+    argv = ["--session", session, "--recording-unit", DEFAULT_RECORDING_UNIT]
+    if combined:
+        argv += ["--combined", combined]
+    for name in DEFAULT_EXCLUDE:
+        argv += ["--exclude", name]
+    print("実行する引数:", " ".join(f'"{a}"' if " " in a else a for a in argv))
+    return argv
 
 
 if __name__ == "__main__":
@@ -361,7 +467,16 @@ if __name__ == "__main__":
     parser.add_argument("--recording", action="append", default=[], metavar="区間=ファイル")
     parser.add_argument("--recording-unit", choices=("us", "ms"), default="us")
     parser.add_argument("--anchor", action="append", default=[], metavar="区間=Computer_timestamp_us")
+    if len(sys.argv) == 1:
+        argv = button_argv()
+        if argv is None:
+            parser.exit(0, "フォルダが選ばれなかったので終了しました。\n")
+    else:
+        argv = None  # コマンドラインの引数をそのまま使う
     try:
-        run(parser.parse_args())
+        run(parser.parse_args(argv))
     except (OSError, ValueError, KeyError, csv.Error) as exc:
+        if isinstance(exc, OSError):
+            import traceback
+            traceback.print_exc()  # ファイル操作のエラーはどの行で起きたかも表示する
         parser.exit(2, f"同期エラー: {exc}\n")
