@@ -15,12 +15,12 @@ except ImportError:
     winsound = None
 # 本文表示設定。負のフォントサイズを使い、Windowsのpt指定と区別する。
 
-READING_TIME_LIMIT_SEC = 60
+READING_TIME_LIMIT_SEC = 45
 MAIN_DEFAULT_QUESTIONS = 120
 BREAK_INTERVAL_SEC = 30 * 60  # 休憩を除いた本実験の経過時間
 SHORT_BREAK_INTERVAL_SEC = 15 * 60  # 本実験の実働20分ごと
 SHORT_BREAK_DURATION_SEC = 60  # 録画を継続する短い休憩
-READING_WARNING_SECONDS = (15, 5)
+READING_WARNING_SECONDS = (20, 5)
 READING_FONT_PX = 32
 READING_LINE_PITCH_PX = 60
 READING_MAX_WIDTH_PX = 1720
@@ -643,7 +643,7 @@ class Experiment:
 
             try:
 
-                winsound.Beep(880 if remaining == 15 else 1320, 180)
+                winsound.Beep(880 if remaining == READING_WARNING_SECONDS[0] else 1320, 180)
 
             except RuntimeError as exc:
 
@@ -707,11 +707,11 @@ class Experiment:
         if self.short_break_start_monotonic is not None:
             return
         self.short_break_start_monotonic = time.monotonic()
+        print(f"小休憩: 完了 {self.current_trial} / {len(self.stimuli)} 問")
         self.log_event("SHORT_BREAK_START", trial_id="", phase="short_break", event_type="start")
         self.clear_frame()
         tk.Label(self.frame, text=(
             "1分間の小休憩です。\n\n"
-            f"完了: {self.current_trial} / {len(self.stimuli)} 問\n\n"
             "Tobiiの録画は停止しないでください。\n"
             "1分後に再開ボタンが有効になります。"),
             font=("Meiryo", 18), justify="center").pack(expand=True)
@@ -759,8 +759,8 @@ class Experiment:
         self.log_event("BREAK_START", trial_id="", phase="break", event_type=reason)
         self.log_event(f"RECORDING_SEGMENT_{self.recording_segment:02d}_END", trial_id="", phase="recording", event_type="end")
         self.clear_frame()
+        print(f"大休憩: 完了 {self.current_trial} / {len(self.stimuli)} 問")
         tk.Label(self.frame, text=(
-            f"完了: {self.current_trial} / {len(self.stimuli)} 問\n\n"
             "実験者はTobii Pro Labの現在の録画を終了・保存してください。\n"
             "参加者は離席して休憩できます。\n\n"
             "再開前には着席して、Tobiiのキャリブレーションを\n"
@@ -877,11 +877,15 @@ class Experiment:
 
         trial_no = self.current_trial + 1
 
+        # 参加者には何問目か・残り何問かを見せない。進み具合は実験者用にコンソールへ出す。
+        print(f"{'練習' if self.is_practice else '本試行'} {trial_no}/{len(self.stimuli)}")
+
+        # 以前の2行（14pt太字・12pt）と同じ高さを空白で確保し、本文の位置を変えない。
         tk.Label(
 
             self.frame,
 
-            text=f"{'練習' if self.is_practice else 'TRIAL'} {trial_no}",
+            text="練習" if self.is_practice else " ",
 
             font=("Meiryo", 14, "bold")
 
@@ -891,7 +895,7 @@ class Experiment:
 
             self.frame,
 
-            text=f"{'練習' if self.is_practice else '文章'} {trial_no}/{len(self.stimuli)}",
+            text=" ",
 
             font=("Meiryo", 12)
 
